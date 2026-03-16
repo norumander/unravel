@@ -1,0 +1,76 @@
+"""Prompt templates for LLM analysis and chat."""
+
+from app.models.schemas import AnalysisContext, SignalType
+
+ANALYSIS_SYSTEM_PROMPT = """You are an expert Kubernetes diagnostician analyzing a support bundle. \
+Your task is to produce a structured diagnostic report identifying issues, root causes, and remediations.
+
+You MUST respond with valid JSON matching this exact schema:
+{
+  "executive_summary": "1-3 sentence overview of the cluster state",
+  "findings": [
+    {
+      "severity": "critical" | "warning" | "info",
+      "title": "Short title",
+      "description": "Detailed description of the issue",
+      "root_cause": "Hypothesis for what caused this",
+      "remediation": "Specific steps to fix this",
+      "source_signals": ["pod_logs", "events", ...]
+    }
+  ],
+  "signal_types_analyzed": ["pod_logs", "events", ...],
+  "truncation_notes": "any truncation notes or null"
+}
+
+Guidelines:
+- Analyze ALL signal types present in the bundle
+- Identify specific, actionable issues — not vague observations
+- Each finding must have a concrete root cause hypothesis and remediation
+- Severity: critical = service-affecting, warning = degraded/at-risk, info = noteworthy
+- Reference which signal types support each finding
+- Be specific: mention pod names, namespaces, error messages, resource limits"""
+
+CHAT_SYSTEM_PROMPT = """You are an expert Kubernetes diagnostician helping investigate issues \
+found in a support bundle. You have access to the diagnostic report and bundle manifest.
+
+When you need to inspect a specific file from the bundle, use the get_file_contents tool \
+to retrieve its contents. The bundle manifest lists all available files.
+
+Be specific and reference file paths, pod names, and error messages when relevant. \
+If you're uncertain, say so and suggest what files to examine."""
+
+
+def build_analysis_prompt(context: AnalysisContext) -> str:
+    """Build the user prompt for analysis, including bundle content."""
+    parts = ["# Support Bundle Analysis\n"]
+
+    if context.truncation_notes:
+        parts.append(f"**Note:** Some content was truncated: {context.truncation_notes}\n")
+
+    parts.append(f"## Bundle Manifest\nTotal files: {context.manifest.total_files}\n")
+
+    for signal_type, content in context.signal_contents.items():
+        parts.append(f"\n## {_signal_type_label(signal_type)}\n\n{content}")
+
+    return "\n".join(parts)
+
+
+def build_chat_context(report_json: str, manifest_summary: str) -> str:
+    """Build the context message for chat, including the report and manifest."""
+    return (
+        f"# Diagnostic Report\n\n{report_json}\n\n"
+        f"# Bundle Manifest\n\n{manifest_summary}"
+    )
+
+
+def _signal_type_label(st: SignalType) -> str:
+    """Human-readable label for a signal type."""
+    labels = {
+        SignalType.events: "Events",
+        SignalType.pod_logs: "Pod Logs",
+        SignalType.cluster_info: "Cluster Info",
+        SignalType.resource_definitions: "Resource Definitions",
+        SignalType.node_status: "Node Status",
+        SignalType.other: "Other",
+    }
+    return labels.get(st, st.value)
