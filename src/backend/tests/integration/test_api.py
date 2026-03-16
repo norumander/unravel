@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.routes import reset_provider
 from app.main import app
 from app.sessions.store import session_store
 
@@ -34,11 +35,13 @@ def sample_bundle():
 
 
 @pytest.fixture(autouse=True)
-def clear_sessions():
-    """Clear session store before each test."""
+def clear_state():
+    """Clear session store and provider cache before each test."""
     session_store._sessions.clear()
+    reset_provider()
     yield
     session_store._sessions.clear()
+    reset_provider()
 
 
 @pytest.fixture
@@ -136,7 +139,7 @@ class TestAnalyze:
 
         mock_provider.analyze = mock_analyze
 
-        with patch("app.api.routes.get_provider", return_value=mock_provider):
+        with patch("app.api.routes._get_or_create_provider", return_value=mock_provider):
             response = await client.get(f"/api/analyze/{session_id}")
 
         assert response.status_code == 200
@@ -182,7 +185,7 @@ class TestChat:
 
         mock_provider.chat = mock_chat
 
-        with patch("app.api.routes.get_provider", return_value=mock_provider):
+        with patch("app.api.routes._get_or_create_provider", return_value=mock_provider):
             response = await client.post(
                 f"/api/chat/{session_id}",
                 json={"message": "What's wrong with the pod?"},

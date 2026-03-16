@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChatMessage, SSEEvent } from '../types/api'
 import { useSSE } from '../hooks/useSSE'
 
@@ -12,12 +12,14 @@ export function ChatPhase({ sessionId }: ChatPhaseProps) {
   const [streamingContent, setStreamingContent] = useState('')
   const [toolInProgress, setToolInProgress] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const pendingContentRef = useRef('')
 
-  const scrollToBottom = () => {
+  const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }
+  }, [])
 
   const handleChunk = useCallback((content: string) => {
+    pendingContentRef.current += content
     setStreamingContent((prev) => prev + content)
   }, [])
 
@@ -25,25 +27,26 @@ export function ChatPhase({ sessionId }: ChatPhaseProps) {
     if (event.type === 'tool_use') {
       setToolInProgress(event.file_path)
     } else if (event.type === 'done') {
-      setStreamingContent((prev) => {
-        if (prev.trim()) {
-          setMessages((msgs) => [...msgs, { role: 'assistant', content: prev }])
-        }
-        return ''
-      })
+      const content = pendingContentRef.current
+      if (content.trim()) {
+        setMessages((msgs) => [...msgs, { role: 'assistant', content }])
+      }
+      setStreamingContent('')
       setToolInProgress(null)
+      pendingContentRef.current = ''
     }
-  }, [])
-
-  const handleDone = useCallback(() => {
-    scrollToBottom()
   }, [])
 
   const { isStreaming, error, startStream } = useSSE({
     onChunk: handleChunk,
     onEvent: handleEvent,
-    onDone: handleDone,
+    onDone: scrollToBottom,
   })
+
+  // Auto-scroll during streaming
+  useEffect(() => {
+    if (streamingContent) scrollToBottom()
+  }, [streamingContent, scrollToBottom])
 
   const sendMessage = useCallback(() => {
     const trimmed = input.trim()
@@ -53,6 +56,7 @@ export function ChatPhase({ sessionId }: ChatPhaseProps) {
     setInput('')
     setStreamingContent('')
     setToolInProgress(null)
+    pendingContentRef.current = ''
 
     startStream(`/api/chat/${sessionId}`, {
       method: 'POST',
@@ -80,7 +84,7 @@ export function ChatPhase({ sessionId }: ChatPhaseProps) {
       >
         {messages.map((msg, idx) => (
           <div
-            key={idx}
+            key={`${msg.role}-${idx}`}
             className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             <div
@@ -106,6 +110,8 @@ export function ChatPhase({ sessionId }: ChatPhaseProps) {
         {toolInProgress && (
           <div
             data-testid="tool-indicator"
+            role="status"
+            aria-label={`Retrieving file: ${toolInProgress}`}
             className="flex items-center gap-2 text-xs text-gray-500"
           >
             <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-500" />

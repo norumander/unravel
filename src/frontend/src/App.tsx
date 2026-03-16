@@ -55,7 +55,9 @@ function App() {
       <main className="mx-auto max-w-4xl p-6">
         {manifest && phase !== 'upload' && (
           <div className="mb-4 rounded-md bg-white px-4 py-2 text-sm text-gray-500 shadow-sm">
-            Bundle: {manifest.total_files} files ({(manifest.total_size_bytes / 1024).toFixed(1)} KB)
+            Bundle: {manifest.total_files} files ({manifest.total_size_bytes > 1024 * 1024
+              ? `${(manifest.total_size_bytes / 1024 / 1024).toFixed(1)} MB`
+              : `${(manifest.total_size_bytes / 1024).toFixed(1)} KB`})
           </div>
         )}
 

@@ -8,7 +8,7 @@ from typing import Any
 import openai
 
 from app.llm.prompts import ANALYSIS_SYSTEM_PROMPT, CHAT_SYSTEM_PROMPT, build_analysis_prompt
-from app.llm.provider import LLMError, LLMProvider
+from app.llm.provider import MAX_OUTPUT_TOKENS, LLMError, LLMProvider
 from app.models.schemas import AnalysisContext, ChatMessage
 
 
@@ -16,10 +16,9 @@ class OpenAIProvider(LLMProvider):
     """LLM provider using the OpenAI GPT API."""
 
     def __init__(self, api_key: str) -> None:
+        super().__init__()
         self._client = openai.AsyncOpenAI(api_key=api_key)
         self._model = os.environ.get("OPENAI_MODEL", "gpt-4o")
-        self._input_tokens = 0
-        self._output_tokens = 0
 
     @property
     def provider_name(self) -> str:
@@ -29,14 +28,6 @@ class OpenAIProvider(LLMProvider):
     def model_name(self) -> str:
         return self._model
 
-    @property
-    def last_input_tokens(self) -> int:
-        return self._input_tokens
-
-    @property
-    def last_output_tokens(self) -> int:
-        return self._output_tokens
-
     async def analyze(self, context: AnalysisContext) -> AsyncIterator[str]:
         """Stream analysis of bundle content using OpenAI."""
         user_prompt = build_analysis_prompt(context)
@@ -44,7 +35,7 @@ class OpenAIProvider(LLMProvider):
         try:
             stream = await self._client.chat.completions.create(
                 model=self._model,
-                max_tokens=4096,
+                max_tokens=MAX_OUTPUT_TOKENS,
                 messages=[
                     {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
@@ -55,8 +46,8 @@ class OpenAIProvider(LLMProvider):
 
             async for chunk in stream:
                 if chunk.usage:
-                    self._input_tokens = chunk.usage.prompt_tokens
-                    self._output_tokens = chunk.usage.completion_tokens
+                    self._last_input_tokens = chunk.usage.prompt_tokens
+                    self._last_output_tokens = chunk.usage.completion_tokens
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
 
@@ -82,7 +73,6 @@ class OpenAIProvider(LLMProvider):
         """Stream a chat response using OpenAI with tool-use support."""
         api_messages = _build_api_messages(messages)
 
-        # Convert tool definitions to OpenAI function format
         api_tools = [
             {
                 "type": "function",
@@ -99,7 +89,7 @@ class OpenAIProvider(LLMProvider):
             while True:
                 stream = await self._client.chat.completions.create(
                     model=self._model,
-                    max_tokens=4096,
+                    max_tokens=MAX_OUTPUT_TOKENS,
                     messages=[
                         {"role": "system", "content": CHAT_SYSTEM_PROMPT},
                         *api_messages,
@@ -114,8 +104,8 @@ class OpenAIProvider(LLMProvider):
 
                 async for chunk in stream:
                     if chunk.usage:
-                        self._input_tokens = chunk.usage.prompt_tokens
-                        self._output_tokens = chunk.usage.completion_tokens
+                        self._last_input_tokens = chunk.usage.prompt_tokens
+                        self._last_output_tokens = chunk.usage.completion_tokens
 
                     if not chunk.choices:
                         continue
@@ -142,11 +132,9 @@ class OpenAIProvider(LLMProvider):
                             if tc.function and tc.function.name:
                                 tool_calls_by_index[idx]["name"] = tc.function.name
 
-                # If no tool calls, we're done
                 if not tool_calls_by_index:
                     break
 
-                # Build assistant message with tool calls
                 assistant_tool_calls = []
                 for _idx, tc_data in sorted(tool_calls_by_index.items()):
                     assistant_tool_calls.append({
@@ -166,13 +154,16 @@ class OpenAIProvider(LLMProvider):
                     assistant_msg["content"] = collected_text
                 api_messages.append(assistant_msg)
 
-                # Execute each tool and add results
                 for tc_info in assistant_tool_calls:
                     tool_input = json.loads(tc_info["function"]["arguments"])
                     tool_name = tc_info["function"]["name"]
 
-                    # Yield a tool-use indicator
-                    yield f'\n{{"type":"tool_use","name":"{tool_name}","file_path":"{tool_input.get("file_path", "")}"}}\n'
+                    # Yield tool-use indicator as proper JSON
+                    yield "\n" + json.dumps({
+                        "type": "tool_use",
+                        "name": tool_name,
+                        "file_path": tool_input.get("file_path", ""),
+                    }) + "\n"
 
                     result = tool_handler(tool_name, tool_input)
                     api_messages.append({

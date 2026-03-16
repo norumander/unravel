@@ -7,6 +7,8 @@ from typing import Any
 
 from app.models.schemas import AnalysisContext, ChatMessage
 
+MAX_OUTPUT_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "8192"))
+
 
 class LLMError(Exception):
     """Raised when an LLM API call fails."""
@@ -15,23 +17,29 @@ class LLMError(Exception):
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
 
-    @property
-    @abstractmethod
-    def provider_name(self) -> str:
-        """Return the provider name (e.g., 'anthropic', 'openai')."""
+    def __init__(self) -> None:
+        self._last_input_tokens = 0
+        self._last_output_tokens = 0
 
     @property
     @abstractmethod
-    def model_name(self) -> str:
-        """Return the model name being used."""
+    def provider_name(self) -> str: ...
+
+    @property
+    @abstractmethod
+    def model_name(self) -> str: ...
+
+    @property
+    def last_input_tokens(self) -> int:
+        return self._last_input_tokens
+
+    @property
+    def last_output_tokens(self) -> int:
+        return self._last_output_tokens
 
     @abstractmethod
     async def analyze(self, context: AnalysisContext) -> AsyncIterator[str]:
-        """Stream analysis of bundle content, yielding text chunks.
-
-        The complete concatenation of all yielded chunks should be a valid
-        JSON string representing a DiagnosticReport.
-        """
+        """Stream analysis, yielding text chunks that form a DiagnosticReport JSON."""
         yield ""  # pragma: no cover
 
     @abstractmethod
@@ -41,23 +49,15 @@ class LLMProvider(ABC):
         tools: list[dict[str, Any]],
         tool_handler: Callable[[str, dict], str],
     ) -> AsyncIterator[str]:
-        """Stream a chat response, yielding text chunks.
-
-        When the LLM requests a tool call, the tool_handler is invoked
-        and the result is fed back into the conversation.
-        """
+        """Stream a chat response with tool-use support."""
         yield ""  # pragma: no cover
 
 
 def get_provider() -> LLMProvider:
-    """Factory function to create the configured LLM provider.
-
-    Reads LLM_PROVIDER env var to select the implementation.
-    Validates that the required API key is present.
+    """Create the configured LLM provider from environment variables.
 
     Raises:
-        ValueError: If LLM_PROVIDER is not set or is unknown.
-        ValueError: If the required API key env var is missing.
+        ValueError: If LLM_PROVIDER is not set or unknown, or if the required API key is missing.
     """
     provider = os.environ.get("LLM_PROVIDER", "").lower()
 

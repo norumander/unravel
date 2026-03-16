@@ -104,5 +104,3 @@ class Session(BaseModel):
     classified_signals: dict[SignalType, list[BundleFile]]
     report: DiagnosticReport | None = None
     chat_history: list[ChatMessage] = Field(default_factory=list)
-
-    model_config = {"arbitrary_types_allowed": True}

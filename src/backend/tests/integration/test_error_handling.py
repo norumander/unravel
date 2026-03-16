@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.api.routes import reset_provider
 from app.llm.provider import LLMError
 from app.main import app
 from app.sessions.store import session_store
@@ -24,10 +25,12 @@ def _make_tar_gz(files: dict[str, bytes]) -> bytes:
 
 
 @pytest.fixture(autouse=True)
-def clear_sessions():
+def clear_state():
     session_store._sessions.clear()
+    reset_provider()
     yield
     session_store._sessions.clear()
+    reset_provider()
 
 
 @pytest.fixture
@@ -64,7 +67,7 @@ class TestAnalyzeErrorHandling:
 
         mock_provider.analyze = mock_analyze
 
-        with patch("app.api.routes.get_provider", return_value=mock_provider):
+        with patch("app.api.routes._get_or_create_provider", return_value=mock_provider):
             response = await client.get(f"/api/analyze/{session_id}")
 
         events = _parse_sse_events(response.text)
@@ -76,7 +79,7 @@ class TestAnalyzeErrorHandling:
     async def test_no_provider_configured_returns_error(self, client, sample_bundle):
         session_id = await _upload(client, sample_bundle)
 
-        with patch("app.api.routes.get_provider", side_effect=ValueError("LLM_PROVIDER not set")):
+        with patch("app.api.routes._get_or_create_provider", side_effect=ValueError("LLM_PROVIDER not set")):
             response = await client.get(f"/api/analyze/{session_id}")
 
         events = _parse_sse_events(response.text)
@@ -97,7 +100,7 @@ class TestAnalyzeErrorHandling:
 
         mock_provider.analyze = mock_analyze_error
 
-        with patch("app.api.routes.get_provider", return_value=mock_provider):
+        with patch("app.api.routes._get_or_create_provider", return_value=mock_provider):
             await client.get(f"/api/analyze/{session_id}")
 
         # Session should still exist and be usable
@@ -120,7 +123,7 @@ class TestChatErrorHandling:
 
         mock_provider.chat = mock_chat
 
-        with patch("app.api.routes.get_provider", return_value=mock_provider):
+        with patch("app.api.routes._get_or_create_provider", return_value=mock_provider):
             response = await client.post(
                 f"/api/chat/{session_id}", json={"message": "hello"}
             )
@@ -144,7 +147,7 @@ class TestChatErrorHandling:
 
         mock_provider.chat = mock_chat_error
 
-        with patch("app.api.routes.get_provider", return_value=mock_provider):
+        with patch("app.api.routes._get_or_create_provider", return_value=mock_provider):
             await client.post(f"/api/chat/{session_id}", json={"message": "hello"})
 
         # Session should still exist

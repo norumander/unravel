@@ -59,6 +59,8 @@ export function downloadMarkdown(report: DiagnosticReport): void {
   const a = document.createElement('a')
   a.href = url
   a.download = 'diagnostic-report.md'
+  document.body.appendChild(a)
   a.click()
+  document.body.removeChild(a)
   URL.revokeObjectURL(url)
 }

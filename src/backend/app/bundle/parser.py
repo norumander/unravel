@@ -1,12 +1,15 @@
 """Bundle parser — validates and extracts .tar.gz support bundles in memory."""
 
 import io
-import os
+import posixpath
 import tarfile
 
 from app.models.schemas import BundleFile, BundleManifest, SignalType
 
 MAX_BUNDLE_SIZE = 500 * 1024 * 1024  # 500MB
+MAX_EXTRACTED_SIZE = 2 * 1024 * 1024 * 1024  # 2GB decompressed
+MAX_FILE_COUNT = 10_000
+MAX_SINGLE_FILE_SIZE = 100 * 1024 * 1024  # 100MB per file
 
 
 class InvalidBundleError(Exception):
@@ -20,14 +23,8 @@ class BundleTooLargeError(Exception):
 def parse_bundle(file_data: bytes) -> tuple[BundleManifest, dict[str, bytes]]:
     """Parse a .tar.gz bundle, extract contents in memory, and return manifest + files.
 
-    Args:
-        file_data: Raw bytes of the uploaded file.
-
-    Returns:
-        Tuple of (BundleManifest, dict mapping file paths to their contents).
-
     Raises:
-        BundleTooLargeError: If file exceeds 500MB.
+        BundleTooLargeError: If compressed file exceeds 500MB or decompressed exceeds 2GB.
         InvalidBundleError: If file is not a valid tar.gz archive.
     """
     if len(file_data) > MAX_BUNDLE_SIZE:
@@ -39,6 +36,7 @@ def parse_bundle(file_data: bytes) -> tuple[BundleManifest, dict[str, bytes]]:
         with tarfile.open(fileobj=io.BytesIO(file_data), mode="r:gz") as tar:
             extracted_files: dict[str, bytes] = {}
             bundle_files: list[BundleFile] = []
+            total_extracted = 0
 
             for member in tar.getmembers():
                 if not member.isfile():
@@ -48,11 +46,27 @@ def parse_bundle(file_data: bytes) -> tuple[BundleManifest, dict[str, bytes]]:
                 if safe_path is None:
                     continue
 
+                # Per-file size guard (check declared size before reading)
+                if member.size > MAX_SINGLE_FILE_SIZE:
+                    continue
+
                 file_obj = tar.extractfile(member)
                 if file_obj is None:
                     continue
 
-                content = file_obj.read()
+                content = file_obj.read(MAX_SINGLE_FILE_SIZE + 1)
+                if len(content) > MAX_SINGLE_FILE_SIZE:
+                    continue
+
+                total_extracted += len(content)
+                if total_extracted > MAX_EXTRACTED_SIZE:
+                    raise BundleTooLargeError(
+                        "Decompressed bundle content exceeds 2GB limit."
+                    )
+
+                if len(extracted_files) >= MAX_FILE_COUNT:
+                    break
+
                 extracted_files[safe_path] = content
                 bundle_files.append(
                     BundleFile(
@@ -77,21 +91,17 @@ def parse_bundle(file_data: bytes) -> tuple[BundleManifest, dict[str, bytes]]:
 def _sanitize_path(path: str) -> str | None:
     """Sanitize a tar member path to prevent path traversal.
 
-    Returns None if the path is unsafe and should be skipped.
-    A path is considered unsafe if:
-    - It contains '..' components (before or after normalization)
-    - It starts with '/' (absolute path)
-    - Normalization changes the path's top-level directory (traversal escape)
+    Uses posixpath for deterministic behavior regardless of host OS.
     """
     if ".." in path.split("/"):
         return None
 
-    normalized = os.path.normpath(path)
+    normalized = posixpath.normpath(path)
 
     if normalized.startswith("..") or normalized.startswith("/"):
         return None
 
-    if ".." in normalized.split(os.sep):
+    if ".." in normalized.split("/"):
         return None
 
     return normalized

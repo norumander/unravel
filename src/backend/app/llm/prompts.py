@@ -62,14 +62,6 @@ def build_analysis_prompt(context: AnalysisContext) -> str:
     return "\n".join(parts)
 
 
-def build_chat_context(report_json: str, manifest_summary: str) -> str:
-    """Build the context message for chat, including the report and manifest."""
-    return (
-        f"# Diagnostic Report\n\n{report_json}\n\n"
-        f"# Bundle Manifest\n\n{manifest_summary}"
-    )
-
-
 def _signal_type_label(st: SignalType) -> str:
     """Human-readable label for a signal type."""
     labels = {

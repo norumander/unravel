@@ -2,8 +2,9 @@
 
 import json
 
-from fastapi import APIRouter, Request, UploadFile
+from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from app.analysis.context import assemble_context
@@ -33,19 +34,51 @@ GET_FILE_CONTENTS_TOOL = {
     },
 }
 
+# Cached provider — created once, reset via reset_provider() for testing
+_provider_instance = None
+
+
+def _get_or_create_provider():
+    global _provider_instance
+    if _provider_instance is None:
+        _provider_instance = get_provider()
+    return _provider_instance
+
+
+def reset_provider():
+    """Reset the cached provider. Used by tests to inject mocks."""
+    global _provider_instance
+    _provider_instance = None
+
+
+class ChatRequest(BaseModel):
+    message: str
+
 
 @router.post("/upload")
 async def upload_bundle(file: UploadFile) -> JSONResponse:
     """Upload and extract a support bundle."""
-    file_data = await file.read()
+    # Stream-read with size limit to avoid buffering unbounded uploads
+    chunks = []
+    total = 0
+    max_size = 500 * 1024 * 1024  # 500MB
+    while True:
+        chunk = await file.read(1024 * 1024)  # 1MB at a time
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_size:
+            return JSONResponse(
+                status_code=413,
+                content={"error": "File exceeds maximum upload size of 500MB."},
+            )
+        chunks.append(chunk)
+    file_data = b"".join(chunks)
 
     try:
         manifest, extracted_files = parse_bundle(file_data)
-    except BundleTooLargeError:
-        return JSONResponse(
-            status_code=413,
-            content={"error": "File exceeds maximum upload size of 500MB."},
-        )
+    except BundleTooLargeError as e:
+        return JSONResponse(status_code=413, content={"error": str(e)})
     except InvalidBundleError:
         return JSONResponse(
             status_code=400,
@@ -65,19 +98,23 @@ async def upload_bundle(file: UploadFile) -> JSONResponse:
 
 
 @router.get("/analyze/{session_id}")
-async def analyze_bundle(session_id: str) -> EventSourceResponse:
+async def analyze_bundle(session_id: str):
     """Stream LLM analysis of the uploaded bundle."""
     try:
         session = session_store.get(session_id)
     except SessionNotFoundError:
-        return JSONResponse(
-            status_code=404,
-            content={"error": "Session not found."},
-        )
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    if session.report is not None:
+        # Analysis already completed — return cached report
+        async def cached_generator():
+            yield {"data": json.dumps({"type": "report", "report": session.report.model_dump()})}
+
+        return EventSourceResponse(cached_generator())
 
     async def event_generator():
         try:
-            provider = get_provider()
+            provider = _get_or_create_provider()
         except ValueError as e:
             yield {"data": json.dumps({"type": "error", "message": str(e)})}
             return
@@ -110,7 +147,6 @@ async def analyze_bundle(session_id: str) -> EventSourceResponse:
                 "data": json.dumps({"type": "report", "report": report.model_dump()})
             }
         except Exception:
-            # If parsing fails, still return what we have
             yield {
                 "data": json.dumps({
                     "type": "error",
@@ -122,27 +158,22 @@ async def analyze_bundle(session_id: str) -> EventSourceResponse:
 
 
 @router.post("/chat/{session_id}")
-async def chat(session_id: str, request: Request) -> EventSourceResponse:
+async def chat(session_id: str, body: ChatRequest):
     """Stream a chat response with tool-use support."""
     try:
         session = session_store.get(session_id)
     except SessionNotFoundError:
-        return JSONResponse(
-            status_code=404,
-            content={"error": "Session not found."},
-        )
-
-    body = await request.json()
-    user_message = body.get("message", "")
+        raise HTTPException(status_code=404, detail="Session not found.")
 
     # Add user message to chat history
-    session.chat_history.append(ChatMessage(role="user", content=user_message))
+    session.chat_history.append(ChatMessage(role="user", content=body.message))
 
     async def event_generator():
         try:
-            provider = get_provider()
+            provider = _get_or_create_provider()
         except ValueError as e:
             yield {"data": json.dumps({"type": "error", "message": str(e)})}
+            yield {"data": json.dumps({"type": "done"})}
             return
 
         # Build context messages: include report and manifest as system context
@@ -155,11 +186,10 @@ async def chat(session_id: str, request: Request) -> EventSourceResponse:
             f"Bundle Manifest ({session.bundle_manifest.total_files} files):\n"
             + "\n".join(
                 f"  {f.path} ({f.size_bytes} bytes, {f.signal_type.value})"
-                for f in session.bundle_manifest.files[:100]  # Limit manifest size
+                for f in session.bundle_manifest.files[:100]
             )
         )
 
-        # Prepend context as a system-like user message
         messages = [
             ChatMessage(role="user", content="\n\n".join(context_parts)),
             ChatMessage(role="assistant", content="I have the diagnostic report and bundle manifest. How can I help you investigate?"),
@@ -172,10 +202,7 @@ async def chat(session_id: str, request: Request) -> EventSourceResponse:
                 content = session.extracted_files.get(file_path)
                 if content is None:
                     return f"File not found in bundle: {file_path}"
-                try:
-                    return content.decode("utf-8", errors="replace")
-                except Exception:
-                    return f"Could not decode file: {file_path}"
+                return content.decode("utf-8", errors="replace")
             return f"Unknown tool: {name}"
 
         collected = ""
@@ -204,6 +231,7 @@ async def chat(session_id: str, request: Request) -> EventSourceResponse:
 
         except LLMError as e:
             yield {"data": json.dumps({"type": "error", "message": str(e)})}
+            yield {"data": json.dumps({"type": "done"})}
             return
 
         # Save assistant response to chat history
@@ -224,7 +252,4 @@ async def delete_session(session_id: str) -> JSONResponse:
         session_store.delete(session_id)
         return JSONResponse(status_code=200, content={"deleted": True})
     except SessionNotFoundError:
-        return JSONResponse(
-            status_code=404,
-            content={"error": "Session not found."},
-        )
+        raise HTTPException(status_code=404, detail="Session not found.")

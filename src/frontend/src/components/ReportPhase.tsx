@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { DiagnosticReport, SSEEvent } from '../types/api'
 import { useSSE } from '../hooks/useSSE'
 import { downloadMarkdown } from '../utils/exportMarkdown'
@@ -21,6 +21,7 @@ export function ReportPhase({ sessionId, onReportComplete }: ReportPhaseProps) {
   const [streamedText, setStreamedText] = useState('')
   const [report, setReport] = useState<DiagnosticReport | null>(null)
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all')
+  const startedRef = useRef(false)
 
   const handleEvent = useCallback(
     (event: SSEEvent) => {
@@ -36,14 +37,20 @@ export function ReportPhase({ sessionId, onReportComplete }: ReportPhaseProps) {
     setStreamedText((prev) => prev + content)
   }, [])
 
-  const { isStreaming, error, startStream } = useSSE({
+  const { isStreaming, error, startStream, stopStream } = useSSE({
     onChunk: handleChunk,
     onEvent: handleEvent,
   })
 
   useEffect(() => {
+    // Guard against StrictMode double-mount
+    if (startedRef.current) return
+    startedRef.current = true
     startStream(`/api/analyze/${sessionId}`)
-  }, [sessionId, startStream])
+    return () => {
+      stopStream()
+    }
+  }, [sessionId, startStream, stopStream])
 
   const filteredFindings = report
     ? report.findings.filter((f) => {
@@ -65,6 +72,8 @@ export function ReportPhase({ sessionId, onReportComplete }: ReportPhaseProps) {
           {isStreaming && (
             <span
               data-testid="streaming-indicator"
+              role="status"
+              aria-label="Analysis in progress"
               className="inline-block h-2 w-2 animate-pulse rounded-full bg-green-500"
             />
           )}
@@ -114,7 +123,7 @@ export function ReportPhase({ sessionId, onReportComplete }: ReportPhaseProps) {
                 Findings ({sortedFindings.length}
                 {severityFilter !== 'all' ? ` of ${report.findings.length}` : ''})
               </h3>
-              <div data-testid="severity-filter" className="flex gap-1">
+              <div data-testid="severity-filter" className="flex gap-1" role="group" aria-label="Filter by severity">
                 {([
                   ['all', 'All'],
                   ['critical+warning', 'Critical + Warning'],
@@ -123,6 +132,7 @@ export function ReportPhase({ sessionId, onReportComplete }: ReportPhaseProps) {
                   <button
                     key={value}
                     onClick={() => setSeverityFilter(value)}
+                    aria-pressed={severityFilter === value}
                     className={`rounded px-2 py-1 text-xs font-medium transition-colors ${
                       severityFilter === value
                         ? 'bg-gray-800 text-white'
@@ -136,7 +146,7 @@ export function ReportPhase({ sessionId, onReportComplete }: ReportPhaseProps) {
             </div>
             {sortedFindings.map((finding, idx) => (
               <div
-                key={idx}
+                key={`${finding.severity}-${finding.title}-${idx}`}
                 className={`rounded-md border p-4 ${SEVERITY_COLORS[finding.severity]}`}
               >
                 <div className="mb-2 flex items-center gap-2">
@@ -162,7 +172,7 @@ export function ReportPhase({ sessionId, onReportComplete }: ReportPhaseProps) {
                         {finding.sources.map((src, si) => (
                           <div
                             key={si}
-                            className="rounded border border-current/10 bg-white/50 px-2 py-1 text-xs"
+                            className="rounded border border-black/10 bg-white/50 px-2 py-1 text-xs"
                           >
                             <span className="font-mono opacity-70">{src.file_path}</span>
                             <pre className="mt-0.5 whitespace-pre-wrap opacity-80">{src.excerpt}</pre>

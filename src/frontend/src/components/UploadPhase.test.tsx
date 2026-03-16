@@ -22,7 +22,20 @@ describe('UploadPhase', () => {
     expect(input.type).toBe('file')
   })
 
-  it('shows error on failed upload', async () => {
+  it('shows error for invalid file type (client-side)', async () => {
+    render(<UploadPhase onUploadComplete={mockOnUploadComplete} />)
+
+    const input = document.getElementById('file-input') as HTMLInputElement
+    const file = new File(['test'], 'test.txt', { type: 'text/plain' })
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('upload-error')).toBeInTheDocument()
+      expect(screen.getByText(/invalid file type/i)).toBeInTheDocument()
+    })
+  })
+
+  it('shows error on server-side upload failure', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn().mockResolvedValue({
@@ -34,7 +47,7 @@ describe('UploadPhase', () => {
     render(<UploadPhase onUploadComplete={mockOnUploadComplete} />)
 
     const input = document.getElementById('file-input') as HTMLInputElement
-    const file = new File(['test'], 'test.txt', { type: 'text/plain' })
+    const file = new File(['test'], 'test.tar.gz', { type: 'application/gzip' })
     fireEvent.change(input, { target: { files: [file] } })
 
     await waitFor(() => {

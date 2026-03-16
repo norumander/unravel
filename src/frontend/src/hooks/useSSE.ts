@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { SSEEvent } from '../types/api'
 
 interface UseSSEOptions {
@@ -15,10 +15,23 @@ interface UseSSEReturn {
   stopStream: () => void
 }
 
-export function useSSE({ onChunk, onEvent, onError, onDone }: UseSSEOptions = {}): UseSSEReturn {
+export function useSSE(options: UseSSEOptions = {}): UseSSEReturn {
   const [isStreaming, setIsStreaming] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
+
+  // Store callbacks in refs to avoid stale closures during streaming
+  const onChunkRef = useRef(options.onChunk)
+  const onEventRef = useRef(options.onEvent)
+  const onErrorRef = useRef(options.onError)
+  const onDoneRef = useRef(options.onDone)
+
+  useEffect(() => {
+    onChunkRef.current = options.onChunk
+    onEventRef.current = options.onEvent
+    onErrorRef.current = options.onError
+    onDoneRef.current = options.onDone
+  })
 
   const stopStream = useCallback(() => {
     abortRef.current?.abort()
@@ -28,7 +41,8 @@ export function useSSE({ onChunk, onEvent, onError, onDone }: UseSSEOptions = {}
 
   const startStream = useCallback(
     (url: string, fetchOptions?: RequestInit) => {
-      stopStream()
+      abortRef.current?.abort()
+      abortRef.current = null
       setError(null)
       setIsStreaming(true)
 
@@ -46,7 +60,7 @@ export function useSSE({ onChunk, onEvent, onError, onDone }: UseSSEOptions = {}
         .then(async (response) => {
           if (!response.ok) {
             const body = await response.json().catch(() => ({ error: 'Request failed' }))
-            throw new Error(body.error || `HTTP ${response.status}`)
+            throw new Error(body.error || body.detail || `HTTP ${response.status}`)
           }
 
           const reader = response.body?.getReader()
@@ -72,18 +86,18 @@ export function useSSE({ onChunk, onEvent, onError, onDone }: UseSSEOptions = {}
 
               try {
                 const event: SSEEvent = JSON.parse(dataStr)
-                onEvent?.(event)
+                onEventRef.current?.(event)
 
                 switch (event.type) {
                   case 'chunk':
-                    onChunk?.(event.content)
+                    onChunkRef.current?.(event.content)
                     break
                   case 'error':
                     setError(event.message)
-                    onError?.(event.message)
+                    onErrorRef.current?.(event.message)
                     break
                   case 'done':
-                    onDone?.()
+                    onDoneRef.current?.()
                     break
                 }
               } catch {
@@ -96,7 +110,7 @@ export function useSSE({ onChunk, onEvent, onError, onDone }: UseSSEOptions = {}
           if (err.name !== 'AbortError') {
             const msg = err.message || 'Stream connection failed'
             setError(msg)
-            onError?.(msg)
+            onErrorRef.current?.(msg)
           }
         })
         .finally(() => {
@@ -104,7 +118,7 @@ export function useSSE({ onChunk, onEvent, onError, onDone }: UseSSEOptions = {}
           abortRef.current = null
         })
     },
-    [onChunk, onEvent, onError, onDone, stopStream],
+    [], // stable — callbacks accessed via refs
   )
 
   return { isStreaming, error, startStream, stopStream }

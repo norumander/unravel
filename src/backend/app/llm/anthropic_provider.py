@@ -8,7 +8,7 @@ from typing import Any
 import anthropic
 
 from app.llm.prompts import ANALYSIS_SYSTEM_PROMPT, CHAT_SYSTEM_PROMPT, build_analysis_prompt
-from app.llm.provider import LLMError, LLMProvider
+from app.llm.provider import MAX_OUTPUT_TOKENS, LLMError, LLMProvider
 from app.models.schemas import AnalysisContext, ChatMessage
 
 
@@ -16,10 +16,9 @@ class AnthropicProvider(LLMProvider):
     """LLM provider using the Anthropic Claude API."""
 
     def __init__(self, api_key: str) -> None:
+        super().__init__()
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
         self._model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
-        self._input_tokens = 0
-        self._output_tokens = 0
 
     @property
     def provider_name(self) -> str:
@@ -29,14 +28,6 @@ class AnthropicProvider(LLMProvider):
     def model_name(self) -> str:
         return self._model
 
-    @property
-    def last_input_tokens(self) -> int:
-        return self._input_tokens
-
-    @property
-    def last_output_tokens(self) -> int:
-        return self._output_tokens
-
     async def analyze(self, context: AnalysisContext) -> AsyncIterator[str]:
         """Stream analysis of bundle content using Claude."""
         user_prompt = build_analysis_prompt(context)
@@ -44,7 +35,7 @@ class AnthropicProvider(LLMProvider):
         try:
             async with self._client.messages.stream(
                 model=self._model,
-                max_tokens=4096,
+                max_tokens=MAX_OUTPUT_TOKENS,
                 system=ANALYSIS_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_prompt}],
             ) as stream:
@@ -52,8 +43,8 @@ class AnthropicProvider(LLMProvider):
                     yield text
 
                 response = await stream.get_final_message()
-                self._input_tokens = response.usage.input_tokens
-                self._output_tokens = response.usage.output_tokens
+                self._last_input_tokens = response.usage.input_tokens
+                self._last_output_tokens = response.usage.output_tokens
 
         except anthropic.AuthenticationError as e:
             raise LLMError(
@@ -75,10 +66,8 @@ class AnthropicProvider(LLMProvider):
         tool_handler: Callable[[str, dict], str],
     ) -> AsyncIterator[str]:
         """Stream a chat response using Claude with tool-use support."""
-        # Convert ChatMessage objects to Anthropic API format
         api_messages = _build_api_messages(messages)
 
-        # Convert tool definitions to Anthropic format
         api_tools = [
             {
                 "name": t["name"],
@@ -92,7 +81,7 @@ class AnthropicProvider(LLMProvider):
             while True:
                 response = await self._client.messages.create(
                     model=self._model,
-                    max_tokens=4096,
+                    max_tokens=MAX_OUTPUT_TOKENS,
                     system=CHAT_SYSTEM_PROMPT,
                     messages=api_messages,
                     tools=api_tools if api_tools else anthropic.NOT_GIVEN,
@@ -124,12 +113,11 @@ class AnthropicProvider(LLMProvider):
                             current_tool = None
                     elif event.type == "message_delta":
                         if hasattr(event.usage, "output_tokens"):
-                            self._output_tokens = event.usage.output_tokens
+                            self._last_output_tokens = event.usage.output_tokens
                     elif event.type == "message_start":
                         if hasattr(event.message, "usage"):
-                            self._input_tokens = event.message.usage.input_tokens
+                            self._last_input_tokens = event.message.usage.input_tokens
 
-                # If no tool use, we're done
                 if not tool_use_blocks:
                     break
 
@@ -148,10 +136,13 @@ class AnthropicProvider(LLMProvider):
                         "input": tool_input,
                     })
 
-                    # Yield a tool-use indicator
-                    yield f'\n{{"type":"tool_use","name":"{tool_block["name"]}","file_path":"{tool_input.get("file_path", "")}"}}\n'
+                    # Yield tool-use indicator as proper JSON
+                    yield "\n" + json.dumps({
+                        "type": "tool_use",
+                        "name": tool_block["name"],
+                        "file_path": tool_input.get("file_path", ""),
+                    }) + "\n"
 
-                    # Execute the tool
                     result = tool_handler(tool_block["name"], tool_input)
                     tool_results.append({
                         "type": "tool_result",
@@ -159,7 +150,6 @@ class AnthropicProvider(LLMProvider):
                         "content": result,
                     })
 
-                # Add assistant message and tool results, then loop for continuation
                 api_messages.append({"role": "assistant", "content": assistant_content})
                 api_messages.append({"role": "user", "content": tool_results})
 
