@@ -15,6 +15,11 @@ export interface UploadResponse {
   manifest: BundleManifest
 }
 
+export interface SourceCitation {
+  file_path: string
+  excerpt: string
+}
+
 export interface Finding {
   severity: 'critical' | 'warning' | 'info'
   title: string
@@ -22,6 +27,7 @@ export interface Finding {
   root_cause: string
   remediation: string
   source_signals: string[]
+  sources?: SourceCitation[]
 }
 
 export interface DiagnosticReport {

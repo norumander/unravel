@@ -15,7 +15,13 @@ You MUST respond with valid JSON matching this exact schema:
       "description": "Detailed description of the issue",
       "root_cause": "Hypothesis for what caused this",
       "remediation": "Specific steps to fix this",
-      "source_signals": ["pod_logs", "events", ...]
+      "source_signals": ["pod_logs", "events", ...],
+      "sources": [
+        {
+          "file_path": "path/to/file/in/bundle",
+          "excerpt": "relevant excerpt from the file (1-3 lines)"
+        }
+      ]
     }
   ],
   "signal_types_analyzed": ["pod_logs", "events", ...],
@@ -28,6 +34,7 @@ Guidelines:
 - Each finding must have a concrete root cause hypothesis and remediation
 - Severity: critical = service-affecting, warning = degraded/at-risk, info = noteworthy
 - Reference which signal types support each finding
+- Each finding MUST include a "sources" array citing the specific files and excerpts that support it
 - Be specific: mention pod names, namespaces, error messages, resource limits"""
 
 CHAT_SYSTEM_PROMPT = """You are an expert Kubernetes diagnostician helping investigate issues \

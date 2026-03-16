@@ -13,6 +13,7 @@ from app.models.schemas import (
     Session,
     Severity,
     SignalType,
+    SourceCitation,
     ToolCall,
 )
 
@@ -87,6 +88,34 @@ class TestFinding:
         data = f.model_dump()
         assert data["severity"] == "critical"
         assert data["source_signals"] == ["pod_logs", "events"]
+
+    def test_create_with_sources(self):
+        f = Finding(
+            severity=Severity.critical,
+            title="OOM",
+            description="Out of memory",
+            root_cause="Memory limit too low",
+            remediation="Increase limits",
+            source_signals=[SignalType.pod_logs],
+            sources=[
+                SourceCitation(file_path="logs/pod.log", excerpt="OOMKilled"),
+                SourceCitation(file_path="events.json", excerpt="Memory cgroup out of memory"),
+            ],
+        )
+        data = f.model_dump()
+        assert len(data["sources"]) == 2
+        assert data["sources"][0]["file_path"] == "logs/pod.log"
+
+    def test_sources_optional(self):
+        f = Finding(
+            severity=Severity.info,
+            title="Test",
+            description="Desc",
+            root_cause="Cause",
+            remediation="Fix",
+            source_signals=[SignalType.events],
+        )
+        assert f.sources is None
 
     def test_json_roundtrip(self):
         f = Finding(

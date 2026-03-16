@@ -41,6 +41,13 @@ class BundleManifest(BaseModel):
     files: list[BundleFile]
 
 
+class SourceCitation(BaseModel):
+    """A reference to a specific file and excerpt supporting a finding."""
+
+    file_path: str
+    excerpt: str
+
+
 class Finding(BaseModel):
     """A single diagnostic finding from the analysis."""
 
@@ -50,6 +57,7 @@ class Finding(BaseModel):
     root_cause: str
     remediation: str
     source_signals: list[SignalType]
+    sources: list[SourceCitation] | None = None
 
 
 class DiagnosticReport(BaseModel):
