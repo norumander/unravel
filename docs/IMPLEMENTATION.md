@@ -276,3 +276,11 @@ Phase 1 complete. Ready to scaffold (Phase 2) then begin implementation.
 - **Next**: Execute Phase 2 — Scaffold project structure, install dependencies, configure tooling.
 - **Blockers**: None
 - **Open Questions**: None
+
+### Checkpoint — 2026-03-15 23:35
+- **Phase**: Phase 2 — Scaffold (COMPLETE)
+- **Completed**: Created backend structure (FastAPI app, 8 packages, pyproject.toml, pytest + ruff). Created frontend structure (React 18 + Vite 6 + TypeScript, Tailwind CSS 4, Vitest 3, RTL). Both test runners verified. Boilerplate cleaned.
+- **State**: Full project scaffold committed. Backend: Python 3.12 venv with all deps installed, pytest runs, ruff passes. Frontend: npm deps installed, vitest runs, Tailwind configured. Ready for Phase 3 validation then TASK-001.
+- **Next**: Execute Phase 3 — Validation Checkpoint, then begin steady-state development with TASK-001.
+- **Blockers**: None
+- **Open Questions**: None
