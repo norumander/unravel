@@ -1,76 +1,114 @@
-# Project Template — Claude Code Bootstrap
+# Unravel
 
-A standardized project template for bootstrapping production-quality projects with Claude Code.
+AI-powered Kubernetes support bundle analyzer. Upload a [Troubleshoot](https://troubleshoot.sh) support bundle, get a structured diagnostic report, then investigate interactively via chat.
 
-## Quick Start
-
-### 1. Extract golden requirements
-
-Open your **"Golden Requirements"** Claude Project. Paste your raw source materials (assignment brief, client spec, challenge description — whatever you have). It extracts the non-negotiable constraints into a `GOLDEN.md`.
-
-### 2. Generate your PRD
-
-Open your **"PRD Workshop"** Claude Project. Describe your idea and provide your `GOLDEN.md` as a reference. The interviewer will walk you through generating a complete `PRD.md` that respects every golden constraint.
-
-### 3. Create your repo
-
-Click **"Use this template"** on GitHub to create a new repository from this template.
-
-### 4. Add your files
-
-Copy both `GOLDEN.md` and `PRD.md` into the repo root.
-
-### 5. Start Claude Code
-
-Open the project directory in Claude Code. It will detect the bootstrap trigger (`CLAUDE.md` + `PRD.md`, no `ARCHITECTURE.md`) and begin the phased initialization:
-
-- **Phase 0**: Init & plan — git setup, stack confirmation, planning gate
-- **Phase 1**: Generate module files — ARCHITECTURE.md, IMPLEMENTATION.md, DECISIONS.md, TESTING.md
-- **Phase 2**: Scaffold — directory structure, dependencies, tooling
-- **Phase 3**: Validation checkpoint — final review before coding begins
-
-Each phase ends with a checkpoint and a fresh session to manage context.
-
-## What's Included
+## Architecture
 
 ```
-├── CLAUDE.md                        # Agent operating manual
-├── .claude/
-│   └── commands/
-│       ├── status.md                # /status — current task + progress
-│       ├── next.md                  # /next — plan the next task
-│       ├── review.md                # /review — self-review against Definition of Done
-│       ├── checkpoint.md            # /checkpoint — write session state
-│       ├── recover.md               # /recover — context recovery for new sessions
-│       └── stuck.md                 # /stuck — error recovery protocol
-├── README.md                        # This file
-├── PRD.md                           # ← You add this (via PRD Workshop)
-└── GOLDEN.md                        # ← You add this (via Golden Requirements)
+┌─────────────────────┐       ┌──────────────────────────────┐
+│  React SPA (:3000)  │──────▶│  FastAPI Backend (:8000)     │
+│                     │  API  │                              │
+│  Upload → Report    │  SSE  │  Bundle Parser               │
+│  → Chat             │◀──────│  Signal Classifier           │
+│                     │       │  Context Assembler            │
+└─────────────────────┘       │  LLM Provider (Anthropic/    │
+                              │    OpenAI)                    │
+                              │  Session Store (in-memory)    │
+                              └──────────────────────────────┘
 ```
 
-## What Gets Generated
+**Frontend**: React 18 + TypeScript + Vite + Tailwind CSS
+**Backend**: Python 3.12 + FastAPI + Pydantic
+**LLM**: Anthropic Claude or OpenAI GPT (swappable via env var)
 
-After bootstrap, Claude Code produces:
+## Setup
 
-- `ARCHITECTURE.md` — system design, components, data flow
-- `IMPLEMENTATION.md` — sequenced tasks with acceptance criteria
-- `DECISIONS.md` — architecture decision records
-- `TESTING.md` — test strategy and conventions
-- Project scaffold (directories, dependencies, tooling)
+### Prerequisites
 
-## Slash Commands
+- Docker and Docker Compose
+- An API key for Anthropic or OpenAI
 
-| Command | What it does |
-|---|---|
-| `/status` | Report current task, progress, and blockers |
-| `/next` | Pick up and plan the next TODO task |
-| `/review` | Self-review current work against Definition of Done |
-| `/checkpoint` | Write a session checkpoint for clean handoffs |
-| `/recover` | Full context recovery when starting a new session |
-| `/stuck` | Stop thrashing, revert, and present the problem |
+### Quick Start
 
-## Prerequisites
+```bash
+# 1. Clone the repo
+git clone <repo-url> && cd unravel
 
-- [Claude Code](https://docs.anthropic.com/en/docs/claude-code) installed
-- A `GOLDEN.md` generated via the Golden Requirements Claude Project (from your raw source materials)
-- A `PRD.md` generated via the PRD Workshop Claude Project (referencing your GOLDEN.md)
+# 2. Configure environment
+cp .env.example .env
+# Edit .env — set LLM_PROVIDER and your API key
+
+# 3. Start
+docker compose up
+```
+
+The app will be available at **http://localhost:3000**.
+
+### Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `LLM_PROVIDER` | Yes | `anthropic` or `openai` |
+| `ANTHROPIC_API_KEY` | If provider=anthropic | Your Anthropic API key |
+| `OPENAI_API_KEY` | If provider=openai | Your OpenAI API key |
+| `ANTHROPIC_MODEL` | No | Override model (default: `claude-sonnet-4-20250514`) |
+| `OPENAI_MODEL` | No | Override model (default: `gpt-4o`) |
+
+## Usage
+
+1. **Upload** a `.tar.gz` support bundle via drag-and-drop or file picker
+2. **Review** the AI-generated diagnostic report with findings sorted by severity
+3. **Chat** to investigate further — the AI can retrieve specific files from the bundle on demand
+
+## How It Works
+
+1. **Bundle Parsing**: Extracts the tar.gz in memory, validates format, prevents path traversal
+2. **Signal Classification**: Categorizes files by path patterns into 5 signal types (pod logs, events, cluster info, resource definitions, node status)
+3. **Context Assembly**: Prioritizes and truncates content to fit the LLM context window (~100K tokens). Priority: events > pod logs > cluster info > resource definitions > node status
+4. **LLM Analysis**: Streams a structured diagnostic report via SSE with findings, root causes, and remediations
+5. **Interactive Chat**: Follow-up investigation with tool-use — the LLM can request specific bundle files via `get_file_contents`
+
+All bundle data is held in memory only and never persisted to disk. Sessions are cleared on delete or server restart.
+
+## Development
+
+### Backend
+
+```bash
+cd src/backend
+python -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+python -m pytest tests/ -v
+```
+
+### Frontend
+
+```bash
+cd src/frontend
+npm install
+npm test
+npm run dev  # Dev server on :3000
+```
+
+## Project Structure
+
+```
+├── docker-compose.yml
+├── .env.example
+├── src/
+│   ├── backend/
+│   │   ├── app/
+│   │   │   ├── api/          # FastAPI routes
+│   │   │   ├── analysis/     # Context assembly, chat engine
+│   │   │   ├── bundle/       # Parser, signal classifier
+│   │   │   ├── llm/          # Provider interface + implementations
+│   │   │   ├── logging/      # Structured LLM call logger
+│   │   │   ├── models/       # Pydantic schemas
+│   │   │   └── sessions/     # In-memory session store
+│   │   └── tests/
+│   └── frontend/
+│       └── src/
+│           ├── components/    # Upload, Report, Chat phases
+│           ├── hooks/         # SSE streaming hook
+│           └── types/         # TypeScript types
+```
