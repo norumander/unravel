@@ -9,7 +9,7 @@ interface ReportPhaseProps {
   manifest: BundleManifest
   signalSummary: Record<string, number>
   onReportComplete: (report: DiagnosticReport) => void
-  onFileSelect?: (path: string) => void
+  onFileSelect?: (path: string, excerpt?: string) => void
 }
 
 const SEVERITY_ORDER = { critical: 0, warning: 1, info: 2 } as const
@@ -51,8 +51,8 @@ function CheckIcon() {
 function ActiveDot() {
   return (
     <span className="flex h-5 w-5 items-center justify-center">
-      <span className="absolute h-3 w-3 animate-ping rounded-full bg-blue-400 opacity-40" />
-      <span className="relative h-2.5 w-2.5 rounded-full bg-blue-500" />
+      <span className="absolute h-3 w-3 animate-ping rounded-full bg-teal-400 opacity-40" />
+      <span className="relative h-2.5 w-2.5 rounded-full bg-teal-500" />
     </span>
   )
 }
@@ -86,7 +86,9 @@ function ProgressStepper({ steps }: { steps: Step[] }) {
                 <StepIcon status={step.status} />
               </div>
               {idx < steps.length - 1 && (
-                <div className="h-6 border-l-2 border-zinc-800" />
+                <div className={`h-6 border-l-2 transition-colors duration-500 ${
+                  step.status === 'done' ? 'border-teal-600' : 'border-zinc-800'
+                }`} />
               )}
             </div>
             {/* Text column */}
@@ -224,15 +226,21 @@ export function ReportPhase({
   )
 
   const severityBorderColor = {
-    critical: 'border-red-500 bg-red-950/40',
-    warning: 'border-amber-500 bg-amber-950/30',
-    info: 'border-zinc-600 bg-zinc-800/50',
+    critical: 'border-l-[3px] border-red-500 bg-red-500/[0.04] shadow-[inset_0_0_20px_rgba(239,68,68,0.04)]',
+    warning: 'border-l-[3px] border-amber-500 bg-amber-500/[0.03] shadow-[inset_0_0_20px_rgba(245,158,11,0.03)]',
+    info: 'border-l-[3px] border-zinc-600 bg-zinc-500/[0.06]',
   } as const
 
   const severityBadgeColor = {
-    critical: 'text-red-400',
-    warning: 'text-amber-400',
-    info: 'text-zinc-400',
+    critical: 'bg-red-500/10 text-red-400',
+    warning: 'bg-amber-500/10 text-amber-400',
+    info: 'bg-zinc-500/10 text-zinc-400',
+  } as const
+
+  const severityDotColor = {
+    critical: 'bg-red-500',
+    warning: 'bg-amber-500',
+    info: 'bg-zinc-500',
   } as const
 
   return (
@@ -254,7 +262,7 @@ export function ReportPhase({
           <button
             data-testid="download-report"
             onClick={() => downloadMarkdown(report)}
-            className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+            className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-400 transition-all duration-200 hover:bg-zinc-800 hover:text-zinc-200 hover:shadow-lg hover:shadow-teal-500/10"
           >
             Download Report
           </button>
@@ -282,7 +290,7 @@ export function ReportPhase({
       {report && (
         <div data-testid="report-content" className="space-y-6">
           {/* Executive Summary */}
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+          <div className="animate-fade-in-up rounded-xl border border-zinc-800 bg-zinc-900 p-5">
             <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
               Executive Summary
             </h3>
@@ -291,7 +299,9 @@ export function ReportPhase({
 
           {/* Event Timeline */}
           {report.timeline && report.timeline.length > 0 && (
-            <Timeline events={report.timeline} />
+            <div className="animate-fade-in-up" style={{ animationDelay: '100ms' }}>
+              <Timeline events={report.timeline} />
+            </div>
           )}
 
           {/* Truncation Note */}
@@ -302,7 +312,7 @@ export function ReportPhase({
           )}
 
           {/* Findings */}
-          <div className="space-y-4">
+          <div className="animate-fade-in-up space-y-4" style={{ animationDelay: '200ms' }}>
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium text-zinc-500">
                 Findings ({sortedFindings.length}
@@ -340,12 +350,14 @@ export function ReportPhase({
             {sortedFindings.map((finding, idx) => (
               <div
                 key={`${finding.severity}-${finding.title}-${idx}`}
-                className={`rounded-lg border-l-4 p-4 ${severityBorderColor[finding.severity]}`}
+                className={`animate-fade-in-up rounded-lg p-4 transition-all duration-200 hover:translate-x-0.5 ${severityBorderColor[finding.severity]}`}
+                style={{ animationDelay: `${idx * 80}ms` }}
               >
                 <div className="mb-2 flex items-center gap-2">
                   <span
-                    className={`text-xs font-semibold uppercase ${severityBadgeColor[finding.severity]}`}
+                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ${severityBadgeColor[finding.severity]}`}
                   >
+                    <span className={`h-1.5 w-1.5 rounded-full ${severityDotColor[finding.severity]}`} />
                     {finding.severity}
                   </span>
                   <h4 className="font-medium text-zinc-100">{finding.title}</h4>
@@ -376,8 +388,8 @@ export function ReportPhase({
                           >
                             {onFileSelect ? (
                               <button
-                                onClick={() => onFileSelect(src.file_path)}
-                                className="font-mono text-blue-400 hover:text-blue-300 hover:underline"
+                                onClick={() => onFileSelect(src.file_path, src.excerpt)}
+                                className="font-mono text-teal-400 hover:text-teal-300 hover:underline"
                               >
                                 {src.file_path}
                               </button>
