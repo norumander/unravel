@@ -8,8 +8,27 @@ from typing import Any
 import openai
 
 from app.llm.prompts import ANALYSIS_SYSTEM_PROMPT, CHAT_SYSTEM_PROMPT, build_analysis_prompt
-from app.llm.provider import MAX_OUTPUT_TOKENS, LLMError, LLMProvider
+from app.llm.provider import (
+    MAX_TOOL_ROUNDS,
+    TOOL_USE_SENTINEL,
+    LLMError,
+    LLMProvider,
+    get_max_output_tokens,
+)
 from app.models.schemas import AnalysisContext, ChatMessage
+
+
+def _map_openai_error(e: Exception) -> LLMError:
+    """Convert OpenAI SDK exceptions to LLMError."""
+    if isinstance(e, openai.AuthenticationError):
+        return LLMError("OpenAI API authentication failed. Check your OPENAI_API_KEY.")
+    if isinstance(e, openai.RateLimitError):
+        return LLMError("OpenAI API rate limit exceeded. Please retry later.")
+    if isinstance(e, openai.APIConnectionError):
+        return LLMError("Failed to connect to OpenAI API. Check your network connection.")
+    if isinstance(e, openai.APIStatusError):
+        return LLMError(f"OpenAI API error: {e.message}")
+    return LLMError(f"Unexpected OpenAI error: {e}")
 
 
 class OpenAIProvider(LLMProvider):
@@ -35,7 +54,7 @@ class OpenAIProvider(LLMProvider):
         try:
             stream = await self._client.chat.completions.create(
                 model=self._model,
-                max_tokens=MAX_OUTPUT_TOKENS,
+                max_tokens=get_max_output_tokens(),
                 messages=[
                     {"role": "system", "content": ANALYSIS_SYSTEM_PROMPT},
                     {"role": "user", "content": user_prompt},
@@ -51,18 +70,13 @@ class OpenAIProvider(LLMProvider):
                 if chunk.choices and chunk.choices[0].delta.content:
                     yield chunk.choices[0].delta.content
 
-        except openai.AuthenticationError as e:
-            raise LLMError(
-                "OpenAI API authentication failed. Check your OPENAI_API_KEY."
-            ) from e
-        except openai.RateLimitError as e:
-            raise LLMError("OpenAI API rate limit exceeded. Please retry later.") from e
-        except openai.APIConnectionError as e:
-            raise LLMError(
-                "Failed to connect to OpenAI API. Check your network connection."
-            ) from e
-        except openai.APIStatusError as e:
-            raise LLMError(f"OpenAI API error: {e.message}") from e
+        except (
+            openai.AuthenticationError,
+            openai.RateLimitError,
+            openai.APIConnectionError,
+            openai.APIStatusError,
+        ) as e:
+            raise _map_openai_error(e) from e
 
     async def chat(
         self,
@@ -86,10 +100,10 @@ class OpenAIProvider(LLMProvider):
         ] if tools else None
 
         try:
-            while True:
+            for _round in range(MAX_TOOL_ROUNDS):
                 stream = await self._client.chat.completions.create(
                     model=self._model,
-                    max_tokens=MAX_OUTPUT_TOKENS,
+                    max_tokens=get_max_output_tokens(),
                     messages=[
                         {"role": "system", "content": CHAT_SYSTEM_PROMPT},
                         *api_messages,
@@ -155,15 +169,23 @@ class OpenAIProvider(LLMProvider):
                 api_messages.append(assistant_msg)
 
                 for tc_info in assistant_tool_calls:
-                    tool_input = json.loads(tc_info["function"]["arguments"])
+                    try:
+                        tool_input = json.loads(tc_info["function"]["arguments"])
+                    except json.JSONDecodeError:
+                        api_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc_info["id"],
+                            "content": "Error: malformed tool arguments",
+                        })
+                        continue
+
                     tool_name = tc_info["function"]["name"]
 
-                    # Yield tool-use indicator as proper JSON
-                    yield "\n" + json.dumps({
+                    yield TOOL_USE_SENTINEL + json.dumps({
                         "type": "tool_use",
                         "name": tool_name,
                         "file_path": tool_input.get("file_path", ""),
-                    }) + "\n"
+                    })
 
                     result = tool_handler(tool_name, tool_input)
                     api_messages.append({
@@ -171,19 +193,17 @@ class OpenAIProvider(LLMProvider):
                         "tool_call_id": tc_info["id"],
                         "content": result,
                     })
+            else:
+                yield "\n[Tool call limit reached — stopping after "
+                yield f"{MAX_TOOL_ROUNDS} rounds]\n"
 
-        except openai.AuthenticationError as e:
-            raise LLMError(
-                "OpenAI API authentication failed. Check your OPENAI_API_KEY."
-            ) from e
-        except openai.RateLimitError as e:
-            raise LLMError("OpenAI API rate limit exceeded. Please retry later.") from e
-        except openai.APIConnectionError as e:
-            raise LLMError(
-                "Failed to connect to OpenAI API. Check your network connection."
-            ) from e
-        except openai.APIStatusError as e:
-            raise LLMError(f"OpenAI API error: {e.message}") from e
+        except (
+            openai.AuthenticationError,
+            openai.RateLimitError,
+            openai.APIConnectionError,
+            openai.APIStatusError,
+        ) as e:
+            raise _map_openai_error(e) from e
 
 
 def _build_api_messages(messages: list[ChatMessage]) -> list[dict]:

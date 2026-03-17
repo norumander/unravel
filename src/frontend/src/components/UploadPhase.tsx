@@ -2,7 +2,7 @@ import { useCallback, useRef, useState, type DragEvent } from 'react'
 import type { BundleManifest, UploadResponse } from '../types/api'
 
 interface UploadPhaseProps {
-  onUploadComplete: (sessionId: string, manifest: BundleManifest) => void
+  onUploadComplete: (sessionId: string, manifest: BundleManifest, signalSummary: Record<string, number>) => void
 }
 
 const MAX_FILE_SIZE = 500 * 1024 * 1024 // 500MB
@@ -50,7 +50,7 @@ export function UploadPhase({ onUploadComplete }: UploadPhaseProps) {
         }
 
         const data: UploadResponse = await response.json()
-        onUploadComplete(data.session_id, data.manifest)
+        onUploadComplete(data.session_id, data.manifest, data.signal_summary)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Upload failed')
       } finally {
@@ -95,21 +95,21 @@ export function UploadPhase({ onUploadComplete }: UploadPhaseProps) {
           if (dragCounter.current === 0) setIsDragging(false)
         }}
         onDrop={handleDrop}
-        className={`w-full max-w-lg rounded-lg border-2 border-dashed p-12 text-center transition-colors ${
+        className={`w-full max-w-lg rounded-xl border-2 border-dashed p-16 text-center transition-all duration-200 ${
           isDragging
-            ? 'border-blue-500 bg-blue-50'
-            : 'border-gray-300 hover:border-gray-400'
+            ? 'border-blue-500 bg-blue-950/20'
+            : 'border-zinc-700 hover:border-zinc-600'
         }`}
       >
-        <div className="mb-4 text-4xl" aria-hidden="true">
-          <svg xmlns="http://www.w3.org/2000/svg" className="mx-auto h-12 w-12 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+        <div className="mb-4" aria-hidden="true">
+          <svg xmlns="http://www.w3.org/2000/svg" className="mx-auto h-10 w-10 text-zinc-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
             <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
           </svg>
         </div>
-        <p className="mb-2 text-lg font-medium text-gray-700">
+        <p className="mb-2 text-lg font-medium text-zinc-300">
           Drop a support bundle here
         </p>
-        <p className="mb-4 text-sm text-gray-500">Accepts .tar.gz files up to 500MB</p>
+        <p className="mb-4 text-sm text-zinc-500">Accepts .tar.gz files up to 500MB</p>
         <input
           type="file"
           accept=".tar.gz,.tgz"
@@ -120,7 +120,7 @@ export function UploadPhase({ onUploadComplete }: UploadPhaseProps) {
         />
         <label
           htmlFor="file-input"
-          className="inline-block cursor-pointer rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+          className="inline-block cursor-pointer rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-500"
         >
           Select .tar.gz file
         </label>
@@ -128,15 +128,15 @@ export function UploadPhase({ onUploadComplete }: UploadPhaseProps) {
 
       {isUploading && (
         <div data-testid="upload-progress" className="flex w-full max-w-lg items-center justify-center gap-3">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-600 border-t-transparent" />
-          <p className="text-sm text-gray-500">Uploading and extracting bundle...</p>
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+          <p className="text-sm text-zinc-400">Uploading and extracting bundle...</p>
         </div>
       )}
 
       {error && (
         <div
           data-testid="upload-error"
-          className="w-full max-w-lg rounded-md bg-red-50 px-4 py-3 text-sm text-red-700"
+          className="w-full max-w-lg rounded-lg border border-red-900/50 bg-red-950/50 px-4 py-3 text-sm text-red-400"
         >
           {error}
         </div>

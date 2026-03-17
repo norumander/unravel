@@ -13,6 +13,7 @@ export interface BundleManifest {
 export interface UploadResponse {
   session_id: string
   manifest: BundleManifest
+  signal_summary: Record<string, number>
 }
 
 export interface SourceCitation {
@@ -30,11 +31,20 @@ export interface Finding {
   sources?: SourceCitation[]
 }
 
+export interface TimelineEvent {
+  timestamp: string
+  title: string
+  description: string
+  severity: 'critical' | 'warning' | 'info'
+  source: string
+}
+
 export interface DiagnosticReport {
   executive_summary: string
   findings: Finding[]
   signal_types_analyzed: string[]
   truncation_notes: string | null
+  timeline?: TimelineEvent[]
 }
 
 export type SSEEvent =

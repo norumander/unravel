@@ -8,8 +8,27 @@ from typing import Any
 import anthropic
 
 from app.llm.prompts import ANALYSIS_SYSTEM_PROMPT, CHAT_SYSTEM_PROMPT, build_analysis_prompt
-from app.llm.provider import MAX_OUTPUT_TOKENS, LLMError, LLMProvider
+from app.llm.provider import (
+    MAX_TOOL_ROUNDS,
+    TOOL_USE_SENTINEL,
+    LLMError,
+    LLMProvider,
+    get_max_output_tokens,
+)
 from app.models.schemas import AnalysisContext, ChatMessage
+
+
+def _map_anthropic_error(e: Exception) -> LLMError:
+    """Convert Anthropic SDK exceptions to LLMError."""
+    if isinstance(e, anthropic.AuthenticationError):
+        return LLMError("Anthropic API authentication failed. Check your ANTHROPIC_API_KEY.")
+    if isinstance(e, anthropic.RateLimitError):
+        return LLMError("Anthropic API rate limit exceeded. Please retry later.")
+    if isinstance(e, anthropic.APIConnectionError):
+        return LLMError("Failed to connect to Anthropic API. Check your network connection.")
+    if isinstance(e, anthropic.APIStatusError):
+        return LLMError(f"Anthropic API error: {e.message}")
+    return LLMError(f"Unexpected Anthropic error: {e}")
 
 
 class AnthropicProvider(LLMProvider):
@@ -35,7 +54,7 @@ class AnthropicProvider(LLMProvider):
         try:
             async with self._client.messages.stream(
                 model=self._model,
-                max_tokens=MAX_OUTPUT_TOKENS,
+                max_tokens=get_max_output_tokens(),
                 system=ANALYSIS_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_prompt}],
             ) as stream:
@@ -46,18 +65,13 @@ class AnthropicProvider(LLMProvider):
                 self._last_input_tokens = response.usage.input_tokens
                 self._last_output_tokens = response.usage.output_tokens
 
-        except anthropic.AuthenticationError as e:
-            raise LLMError(
-                "Anthropic API authentication failed. Check your ANTHROPIC_API_KEY."
-            ) from e
-        except anthropic.RateLimitError as e:
-            raise LLMError("Anthropic API rate limit exceeded. Please retry later.") from e
-        except anthropic.APIConnectionError as e:
-            raise LLMError(
-                "Failed to connect to Anthropic API. Check your network connection."
-            ) from e
-        except anthropic.APIStatusError as e:
-            raise LLMError(f"Anthropic API error: {e.message}") from e
+        except (
+            anthropic.AuthenticationError,
+            anthropic.RateLimitError,
+            anthropic.APIConnectionError,
+            anthropic.APIStatusError,
+        ) as e:
+            raise _map_anthropic_error(e) from e
 
     async def chat(
         self,
@@ -78,10 +92,10 @@ class AnthropicProvider(LLMProvider):
         ]
 
         try:
-            while True:
+            for _round in range(MAX_TOOL_ROUNDS):
                 response = await self._client.messages.create(
                     model=self._model,
-                    max_tokens=MAX_OUTPUT_TOKENS,
+                    max_tokens=get_max_output_tokens(),
                     system=CHAT_SYSTEM_PROMPT,
                     messages=api_messages,
                     tools=api_tools if api_tools else anthropic.NOT_GIVEN,
@@ -128,7 +142,17 @@ class AnthropicProvider(LLMProvider):
 
                 tool_results: list[dict] = []
                 for tool_block in tool_use_blocks:
-                    tool_input = json.loads(tool_block["input_json"])
+                    try:
+                        tool_input = json.loads(tool_block["input_json"])
+                    except json.JSONDecodeError:
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tool_block["id"],
+                            "content": "Error: malformed tool arguments",
+                            "is_error": True,
+                        })
+                        continue
+
                     assistant_content.append({
                         "type": "tool_use",
                         "id": tool_block["id"],
@@ -136,12 +160,11 @@ class AnthropicProvider(LLMProvider):
                         "input": tool_input,
                     })
 
-                    # Yield tool-use indicator as proper JSON
-                    yield "\n" + json.dumps({
+                    yield TOOL_USE_SENTINEL + json.dumps({
                         "type": "tool_use",
                         "name": tool_block["name"],
                         "file_path": tool_input.get("file_path", ""),
-                    }) + "\n"
+                    })
 
                     result = tool_handler(tool_block["name"], tool_input)
                     tool_results.append({
@@ -152,19 +175,17 @@ class AnthropicProvider(LLMProvider):
 
                 api_messages.append({"role": "assistant", "content": assistant_content})
                 api_messages.append({"role": "user", "content": tool_results})
+            else:
+                yield "\n[Tool call limit reached — stopping after "
+                yield f"{MAX_TOOL_ROUNDS} rounds]\n"
 
-        except anthropic.AuthenticationError as e:
-            raise LLMError(
-                "Anthropic API authentication failed. Check your ANTHROPIC_API_KEY."
-            ) from e
-        except anthropic.RateLimitError as e:
-            raise LLMError("Anthropic API rate limit exceeded. Please retry later.") from e
-        except anthropic.APIConnectionError as e:
-            raise LLMError(
-                "Failed to connect to Anthropic API. Check your network connection."
-            ) from e
-        except anthropic.APIStatusError as e:
-            raise LLMError(f"Anthropic API error: {e.message}") from e
+        except (
+            anthropic.AuthenticationError,
+            anthropic.RateLimitError,
+            anthropic.APIConnectionError,
+            anthropic.APIStatusError,
+        ) as e:
+            raise _map_anthropic_error(e) from e
 
 
 def _build_api_messages(messages: list[ChatMessage]) -> list[dict]:

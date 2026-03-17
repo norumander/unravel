@@ -60,6 +60,16 @@ class Finding(BaseModel):
     sources: list[SourceCitation] | None = None
 
 
+class TimelineEvent(BaseModel):
+    """A timestamped event extracted from the bundle for timeline visualization."""
+
+    timestamp: str
+    title: str
+    description: str
+    severity: Severity
+    source: str
+
+
 class DiagnosticReport(BaseModel):
     """Structured diagnostic report produced by LLM analysis."""
 
@@ -67,6 +77,7 @@ class DiagnosticReport(BaseModel):
     findings: list[Finding]
     signal_types_analyzed: list[SignalType]
     truncation_notes: str | None = None
+    timeline: list[TimelineEvent] = Field(default_factory=list)
 
 
 class ToolCall(BaseModel):
@@ -103,4 +114,5 @@ class Session(BaseModel):
     extracted_files: dict[str, bytes]
     classified_signals: dict[SignalType, list[BundleFile]]
     report: DiagnosticReport | None = None
+    analyzing: bool = False
     chat_history: list[ChatMessage] = Field(default_factory=list)

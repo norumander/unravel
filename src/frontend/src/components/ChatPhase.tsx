@@ -1,12 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ChatMessage, SSEEvent } from '../types/api'
+import type { ChatMessage, DiagnosticReport, SSEEvent } from '../types/api'
 import { useSSE } from '../hooks/useSSE'
 
 interface ChatPhaseProps {
   sessionId: string
+  report: DiagnosticReport | null
 }
 
-export function ChatPhase({ sessionId }: ChatPhaseProps) {
+function generateSuggestions(report: DiagnosticReport): string[] {
+  const suggestions: string[] = []
+  const critical = report.findings.filter(f => f.severity === 'critical')
+  const warnings = report.findings.filter(f => f.severity === 'warning')
+
+  if (critical.length > 0) {
+    suggestions.push(`What caused "${critical[0].title}" and how do I fix it?`)
+  }
+  if (critical.length > 1) {
+    suggestions.push(`Are the issues "${critical[0].title}" and "${critical[1].title}" related?`)
+  }
+  if (warnings.length > 0) {
+    suggestions.push(`Tell me more about the warning: "${warnings[0].title}"`)
+  }
+  suggestions.push('What kubectl commands should I run to diagnose these issues?')
+
+  return suggestions.slice(0, 4)
+}
+
+export function ChatPhase({ sessionId, report }: ChatPhaseProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [streamingContent, setStreamingContent] = useState('')
@@ -48,22 +68,25 @@ export function ChatPhase({ sessionId }: ChatPhaseProps) {
     if (streamingContent) scrollToBottom()
   }, [streamingContent, scrollToBottom])
 
-  const sendMessage = useCallback(() => {
-    const trimmed = input.trim()
-    if (!trimmed || isStreaming) return
+  const sendMessage = useCallback(
+    (text?: string) => {
+      const trimmed = (text ?? input).trim()
+      if (!trimmed || isStreaming) return
 
-    setMessages((prev) => [...prev, { role: 'user', content: trimmed }])
-    setInput('')
-    setStreamingContent('')
-    setToolInProgress(null)
-    pendingContentRef.current = ''
+      setMessages((prev) => [...prev, { role: 'user', content: trimmed }])
+      setInput('')
+      setStreamingContent('')
+      setToolInProgress(null)
+      pendingContentRef.current = ''
 
-    startStream(`/api/chat/${sessionId}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: trimmed }),
-    })
-  }, [input, isStreaming, sessionId, startStream])
+      startStream(`/api/chat/${sessionId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: trimmed }),
+      })
+    },
+    [input, isStreaming, sessionId, startStream],
+  )
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -72,57 +95,102 @@ export function ChatPhase({ sessionId }: ChatPhaseProps) {
     }
   }
 
+  const handleSuggestionClick = (question: string) => {
+    setInput(question)
+    sendMessage(question)
+  }
+
+  const suggestions = report ? generateSuggestions(report) : []
+
   return (
-    <div className="flex h-[500px] flex-col rounded-md border border-gray-200">
-      <div className="border-b border-gray-200 px-4 py-2">
-        <h2 className="text-sm font-semibold text-gray-700">Investigation Chat</h2>
+    <div className="flex h-[480px] flex-col rounded-xl border border-zinc-800 bg-zinc-900">
+      {/* Header */}
+      <div className="flex items-center gap-2 border-b border-zinc-800 px-5 py-3">
+        <svg
+          viewBox="0 0 16 16"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          className="h-4 w-4 text-zinc-500"
+        >
+          <rect x="2" y="3" width="12" height="10" rx="1.5" />
+          <path d="M5 8l2 2 4-4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <h2 className="text-sm font-semibold text-zinc-300">Investigation Chat</h2>
       </div>
 
+      {/* Messages area */}
       <div
         data-testid="chat-messages"
-        className="flex-1 space-y-4 overflow-y-auto p-4"
+        className="flex-1 space-y-5 overflow-y-auto p-5"
       >
-        {messages.map((msg, idx) => (
-          <div
-            key={`${msg.role}-${idx}`}
-            className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-          >
-            <div
-              className={`max-w-[80%] rounded-lg px-4 py-2 text-sm ${
-                msg.role === 'user'
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-800'
-              }`}
-            >
-              <pre className="whitespace-pre-wrap font-sans">{msg.content}</pre>
-            </div>
-          </div>
-        ))}
-
-        {streamingContent && (
-          <div className="flex justify-start">
-            <div className="max-w-[80%] rounded-lg bg-gray-100 px-4 py-2 text-sm text-gray-800">
-              <pre className="whitespace-pre-wrap font-sans">{streamingContent}</pre>
+        {/* Suggested questions when no messages yet */}
+        {messages.length === 0 && report && suggestions.length > 0 && (
+          <div data-testid="suggested-questions">
+            <p className="mb-3 text-xs text-zinc-500">Suggested questions</p>
+            <div className="space-y-2">
+              {suggestions.map((question, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => handleSuggestionClick(question)}
+                  className="w-full cursor-pointer rounded-lg border border-zinc-700 px-4 py-3 text-left text-sm text-zinc-300 transition-colors hover:border-zinc-600 hover:bg-zinc-800"
+                >
+                  {question}
+                </button>
+              ))}
             </div>
           </div>
         )}
 
+        {/* Message history */}
+        {messages.map((msg, idx) =>
+          msg.role === 'user' ? (
+            <div key={`${msg.role}-${idx}`} className="flex justify-end">
+              <div className="ml-16 rounded-xl bg-zinc-700/50 px-4 py-3 text-sm text-zinc-100">
+                <pre className="whitespace-pre-wrap font-sans">{msg.content}</pre>
+              </div>
+            </div>
+          ) : (
+            <div key={`${msg.role}-${idx}`} className="mr-8">
+              <p className="mb-1 text-xs font-medium text-zinc-500">Unravel</p>
+              <div className="text-sm leading-relaxed text-zinc-300">
+                <pre className="whitespace-pre-wrap font-sans">{msg.content}</pre>
+              </div>
+            </div>
+          ),
+        )}
+
+        {/* Streaming content */}
+        {streamingContent && (
+          <div className="mr-8">
+            <p className="mb-1 text-xs font-medium text-zinc-500">Unravel</p>
+            <div className="text-sm leading-relaxed text-zinc-300">
+              <pre className="whitespace-pre-wrap font-sans">
+                {streamingContent}
+                <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-blue-400 align-text-bottom" />
+              </pre>
+            </div>
+          </div>
+        )}
+
+        {/* Tool use indicator */}
         {toolInProgress && (
           <div
             data-testid="tool-indicator"
             role="status"
             aria-label={`Retrieving file: ${toolInProgress}`}
-            className="flex items-center gap-2 text-xs text-gray-500"
+            className="flex items-center gap-2 rounded-lg bg-zinc-800/80 px-3 py-2 font-mono text-xs text-zinc-400"
           >
-            <span className="inline-block h-2 w-2 animate-pulse rounded-full bg-amber-500" />
-            Retrieving file: {toolInProgress}
+            <span className="h-2 w-2 animate-pulse rounded-full bg-amber-500" />
+            Reading {toolInProgress}
           </div>
         )}
 
+        {/* Error state */}
         {error && (
           <div
             data-testid="chat-error"
-            className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700"
+            className="rounded-lg border border-red-900/30 bg-red-950/50 px-4 py-2 text-sm text-red-400"
           >
             {error}
           </div>
@@ -131,8 +199,9 @@ export function ChatPhase({ sessionId }: ChatPhaseProps) {
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="border-t border-gray-200 p-3">
-        <div className="flex gap-2">
+      {/* Input area */}
+      <div className="border-t border-zinc-800 p-4">
+        <div className="relative">
           <textarea
             data-testid="chat-input"
             value={input}
@@ -141,15 +210,27 @@ export function ChatPhase({ sessionId }: ChatPhaseProps) {
             placeholder="Ask about the bundle..."
             disabled={isStreaming}
             rows={1}
-            className="flex-1 resize-none rounded-md border border-gray-300 px-3 py-2 text-sm focus:border-blue-500 focus:outline-none disabled:opacity-50"
+            className="w-full resize-none rounded-xl border border-zinc-700 bg-zinc-800 px-4 py-3 pr-12 text-sm text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none disabled:opacity-50"
           />
           <button
             data-testid="send-button"
-            onClick={sendMessage}
+            onClick={() => sendMessage()}
             disabled={isStreaming || !input.trim()}
-            className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+            className="absolute bottom-2 right-2 rounded-lg bg-blue-600 p-2 text-white transition-colors hover:bg-blue-500 disabled:opacity-30 disabled:hover:bg-blue-600"
           >
-            Send
+            <svg
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className="h-4 w-4"
+            >
+              <path
+                d="M8 12V4m0 0L4 8m4-4l4 4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </button>
         </div>
       </div>

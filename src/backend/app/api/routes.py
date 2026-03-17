@@ -1,19 +1,22 @@
 """FastAPI routes for the Unravel API."""
 
 import json
+import re
 
 from fastapi import APIRouter, HTTPException, UploadFile
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse, PlainTextResponse
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from app.analysis.context import assemble_context
 from app.bundle.classifier import classify_files
 from app.bundle.parser import BundleTooLargeError, InvalidBundleError, parse_bundle
-from app.llm.provider import LLMError, get_provider
+from app.llm.provider import TOOL_USE_SENTINEL, LLMError, get_provider
 from app.logging.llm_logger import llm_logger
 from app.models.schemas import ChatMessage, DiagnosticReport
 from app.sessions.store import SessionNotFoundError, session_store
+
+MAX_CHAT_HISTORY = 40  # ~20 turns of user+assistant
 
 router = APIRouter(prefix="/api")
 
@@ -51,8 +54,11 @@ def reset_provider():
     _provider_instance = None
 
 
+MAX_MESSAGE_LENGTH = 50_000  # ~12.5k tokens — generous but bounded
+
+
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(..., min_length=1, max_length=MAX_MESSAGE_LENGTH)
 
 
 @router.post("/upload")
@@ -76,7 +82,7 @@ async def upload_bundle(file: UploadFile) -> JSONResponse:
     file_data = b"".join(chunks)
 
     try:
-        manifest, extracted_files = parse_bundle(file_data)
+        manifest, extracted_files, parse_warnings = parse_bundle(file_data)
     except BundleTooLargeError as e:
         return JSONResponse(status_code=413, content={"error": str(e)})
     except InvalidBundleError:
@@ -88,13 +94,20 @@ async def upload_bundle(file: UploadFile) -> JSONResponse:
     classified = classify_files(manifest)
     session = session_store.create(manifest, extracted_files, classified)
 
-    return JSONResponse(
-        status_code=200,
-        content={
-            "session_id": session.session_id,
-            "manifest": manifest.model_dump(),
-        },
-    )
+    signal_summary = {
+        signal_type.value: len(files)
+        for signal_type, files in classified.items()
+    }
+
+    response_content: dict = {
+        "session_id": session.session_id,
+        "manifest": manifest.model_dump(),
+        "signal_summary": signal_summary,
+    }
+    if parse_warnings:
+        response_content["warnings"] = parse_warnings
+
+    return JSONResponse(status_code=200, content=response_content)
 
 
 @router.get("/analyze/{session_id}")
@@ -112,47 +125,58 @@ async def analyze_bundle(session_id: str):
 
         return EventSourceResponse(cached_generator())
 
+    if session.analyzing:
+        raise HTTPException(status_code=409, detail="Analysis already in progress.")
+
+    session.analyzing = True
+
     async def event_generator():
         try:
-            provider = _get_or_create_provider()
-        except ValueError as e:
-            yield {"data": json.dumps({"type": "error", "message": str(e)})}
-            return
+            try:
+                provider = _get_or_create_provider()
+            except ValueError as e:
+                yield {"data": json.dumps({"type": "error", "message": str(e)})}
+                return
 
-        context = assemble_context(
-            session.classified_signals, session.extracted_files
-        )
+            context = assemble_context(
+                session.classified_signals, session.extracted_files
+            )
 
-        collected = ""
-        try:
-            with llm_logger.track(
-                session_id, "analyze", provider.provider_name, provider.model_name
-            ) as tracker:
-                async for chunk in provider.analyze(context):
-                    collected += chunk
-                    yield {"data": json.dumps({"type": "chunk", "content": chunk})}
+            collected = ""
+            try:
+                with llm_logger.track(
+                    session_id, "analyze", provider.provider_name, provider.model_name
+                ) as tracker:
+                    async for chunk in provider.analyze(context):
+                        collected += chunk
+                        yield {"data": json.dumps({"type": "chunk", "content": chunk})}
 
-                tracker.input_tokens = provider.last_input_tokens
-                tracker.output_tokens = provider.last_output_tokens
+                    tracker.input_tokens = provider.last_input_tokens
+                    tracker.output_tokens = provider.last_output_tokens
 
-        except LLMError as e:
-            yield {"data": json.dumps({"type": "error", "message": str(e)})}
-            return
+            except LLMError as e:
+                yield {"data": json.dumps({"type": "error", "message": str(e)})}
+                return
 
-        # Parse the complete response into a DiagnosticReport
-        try:
-            report = DiagnosticReport.model_validate_json(collected)
-            session.report = report
-            yield {
-                "data": json.dumps({"type": "report", "report": report.model_dump()})
-            }
-        except Exception:
-            yield {
-                "data": json.dumps({
-                    "type": "error",
-                    "message": "Failed to parse LLM response into structured report.",
-                })
-            }
+            # Strip markdown fences that LLMs commonly wrap JSON in
+            cleaned = _strip_markdown_fences(collected)
+
+            # Parse the complete response into a DiagnosticReport
+            try:
+                report = DiagnosticReport.model_validate_json(cleaned)
+                session.report = report
+                yield {
+                    "data": json.dumps({"type": "report", "report": report.model_dump()})
+                }
+            except Exception:
+                yield {
+                    "data": json.dumps({
+                        "type": "error",
+                        "message": "Failed to parse LLM response into structured report.",
+                    })
+                }
+        finally:
+            session.analyzing = False
 
     return EventSourceResponse(event_generator())
 
@@ -167,6 +191,10 @@ async def chat(session_id: str, body: ChatRequest):
 
     # Add user message to chat history
     session.chat_history.append(ChatMessage(role="user", content=body.message))
+
+    # Cap chat history to prevent unbounded context growth
+    if len(session.chat_history) > MAX_CHAT_HISTORY:
+        session.chat_history = session.chat_history[-MAX_CHAT_HISTORY:]
 
     async def event_generator():
         try:
@@ -213,15 +241,11 @@ async def chat(session_id: str, body: ChatRequest):
                 async for chunk in provider.chat(
                     messages, [GET_FILE_CONTENTS_TOOL], tool_handler
                 ):
-                    # Check if this is a tool-use indicator
-                    stripped = chunk.strip()
-                    if stripped.startswith('{"type":"tool_use"'):
-                        try:
-                            tool_data = json.loads(stripped)
-                            yield {"data": json.dumps(tool_data)}
-                            continue
-                        except json.JSONDecodeError:
-                            pass
+                    # Check if this is a tool-use indicator via sentinel prefix
+                    if chunk.startswith(TOOL_USE_SENTINEL):
+                        tool_data = json.loads(chunk[len(TOOL_USE_SENTINEL):])
+                        yield {"data": json.dumps(tool_data)}
+                        continue
 
                     collected += chunk
                     yield {"data": json.dumps({"type": "chunk", "content": chunk})}
@@ -245,6 +269,16 @@ async def chat(session_id: str, body: ChatRequest):
     return EventSourceResponse(event_generator())
 
 
+def _strip_markdown_fences(text: str) -> str:
+    """Strip markdown code fences that LLMs commonly wrap JSON responses in."""
+    stripped = text.strip()
+    # Match ```json ... ``` or ``` ... ```
+    match = re.match(r"^```(?:json)?\s*\n(.*)\n\s*```$", stripped, re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return stripped
+
+
 @router.delete("/sessions/{session_id}")
 async def delete_session(session_id: str) -> JSONResponse:
     """Delete a session and all associated data."""
@@ -253,3 +287,18 @@ async def delete_session(session_id: str) -> JSONResponse:
         return JSONResponse(status_code=200, content={"deleted": True})
     except SessionNotFoundError:
         raise HTTPException(status_code=404, detail="Session not found.")
+
+
+@router.get("/files/{session_id}/{file_path:path}")
+async def get_file(session_id: str, file_path: str) -> PlainTextResponse:
+    """Retrieve the content of a specific file from the session's extracted files."""
+    try:
+        session = session_store.get(session_id)
+    except SessionNotFoundError:
+        raise HTTPException(status_code=404, detail="Session not found.")
+
+    content = session.extracted_files.get(file_path)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+
+    return PlainTextResponse(content=content.decode("utf-8", errors="replace"))

@@ -20,8 +20,14 @@ class BundleTooLargeError(Exception):
     """Raised when the uploaded file exceeds the maximum size limit."""
 
 
-def parse_bundle(file_data: bytes) -> tuple[BundleManifest, dict[str, bytes]]:
-    """Parse a .tar.gz bundle, extract contents in memory, and return manifest + files.
+def parse_bundle(
+    file_data: bytes,
+) -> tuple[BundleManifest, dict[str, bytes], list[str]]:
+    """Parse a .tar.gz bundle, extract contents in memory, and return manifest + files + warnings.
+
+    Returns:
+        A tuple of (manifest, extracted_files, warnings). Warnings list reasons
+        individual files were skipped during extraction.
 
     Raises:
         BundleTooLargeError: If compressed file exceeds 500MB or decompressed exceeds 2GB.
@@ -36,6 +42,7 @@ def parse_bundle(file_data: bytes) -> tuple[BundleManifest, dict[str, bytes]]:
         with tarfile.open(fileobj=io.BytesIO(file_data), mode="r:gz") as tar:
             extracted_files: dict[str, bytes] = {}
             bundle_files: list[BundleFile] = []
+            warnings: list[str] = []
             total_extracted = 0
 
             for member in tar.getmembers():
@@ -44,10 +51,14 @@ def parse_bundle(file_data: bytes) -> tuple[BundleManifest, dict[str, bytes]]:
 
                 safe_path = _sanitize_path(member.name)
                 if safe_path is None:
+                    warnings.append(f"Skipped '{member.name}': unsafe path")
                     continue
 
                 # Per-file size guard (check declared size before reading)
                 if member.size > MAX_SINGLE_FILE_SIZE:
+                    warnings.append(
+                        f"Skipped '{safe_path}': exceeds {MAX_SINGLE_FILE_SIZE // (1024 * 1024)}MB file size limit"
+                    )
                     continue
 
                 file_obj = tar.extractfile(member)
@@ -56,6 +67,9 @@ def parse_bundle(file_data: bytes) -> tuple[BundleManifest, dict[str, bytes]]:
 
                 content = file_obj.read(MAX_SINGLE_FILE_SIZE + 1)
                 if len(content) > MAX_SINGLE_FILE_SIZE:
+                    warnings.append(
+                        f"Skipped '{safe_path}': actual size exceeds {MAX_SINGLE_FILE_SIZE // (1024 * 1024)}MB limit"
+                    )
                     continue
 
                 total_extracted += len(content)
@@ -65,6 +79,9 @@ def parse_bundle(file_data: bytes) -> tuple[BundleManifest, dict[str, bytes]]:
                     )
 
                 if len(extracted_files) >= MAX_FILE_COUNT:
+                    warnings.append(
+                        f"Stopped at {MAX_FILE_COUNT} files — remaining files skipped"
+                    )
                     break
 
                 extracted_files[safe_path] = content
@@ -82,7 +99,7 @@ def parse_bundle(file_data: bytes) -> tuple[BundleManifest, dict[str, bytes]]:
                 total_size_bytes=total_size,
                 files=bundle_files,
             )
-            return manifest, extracted_files
+            return manifest, extracted_files, warnings
 
     except tarfile.TarError as e:
         raise InvalidBundleError("Invalid file format. Expected a .tar.gz archive.") from e

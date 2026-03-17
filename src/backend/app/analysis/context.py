@@ -68,10 +68,7 @@ def assemble_context(
             file_content = files.get(bf.path)
             if file_content is None:
                 continue
-            try:
-                text = file_content.decode("utf-8", errors="replace")
-            except Exception:
-                continue
+            text = file_content.decode("utf-8", errors="replace")
             parts.append(f"--- {bf.path} ---\n{text}")
 
         if parts:

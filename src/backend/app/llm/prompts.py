@@ -25,7 +25,16 @@ You MUST respond with valid JSON matching this exact schema:
     }
   ],
   "signal_types_analyzed": ["pod_logs", "events", ...],
-  "truncation_notes": "any truncation notes or null"
+  "truncation_notes": "any truncation notes or null",
+  "timeline": [
+    {
+      "timestamp": "2024-01-15T14:23:07Z or relative like '3m ago'",
+      "title": "Short event description",
+      "description": "What happened",
+      "severity": "critical" | "warning" | "info",
+      "source": "file path or resource name"
+    }
+  ]
 }
 
 Guidelines:
@@ -35,7 +44,10 @@ Guidelines:
 - Severity: critical = service-affecting, warning = degraded/at-risk, info = noteworthy
 - Reference which signal types support each finding
 - Each finding MUST include a "sources" array citing the specific files and excerpts that support it
-- Be specific: mention pod names, namespaces, error messages, resource limits"""
+- Be specific: mention pod names, namespaces, error messages, resource limits
+- In remediations, include specific kubectl commands when applicable (e.g. kubectl describe pod, kubectl logs, kubectl edit deployment)
+- Remediations should be actionable: "Run `kubectl describe pod auth-service -n production` to check resource limits" not "check the pod's resource limits"
+- Extract a "timeline" array of key events in chronological order from the bundle data (events, logs, resource changes). Include timestamps when available. This helps visualize the sequence of failures."""
 
 CHAT_SYSTEM_PROMPT = """You are an expert Kubernetes diagnostician helping investigate issues \
 found in a support bundle. You have access to the diagnostic report and bundle manifest.

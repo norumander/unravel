@@ -7,7 +7,13 @@ from typing import Any
 
 from app.models.schemas import AnalysisContext, ChatMessage
 
-MAX_OUTPUT_TOKENS = int(os.environ.get("LLM_MAX_TOKENS", "8192"))
+TOOL_USE_SENTINEL = "\x00__TOOL_USE__"
+MAX_TOOL_ROUNDS = 10
+
+
+def get_max_output_tokens() -> int:
+    """Read max output tokens from environment at call time, not import time."""
+    return int(os.environ.get("LLM_MAX_TOKENS", "8192"))
 
 
 class LLMError(Exception):

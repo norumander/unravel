@@ -15,6 +15,16 @@ export function reportToMarkdown(report: DiagnosticReport): string {
     lines.push('')
   }
 
+  if (report.timeline && report.timeline.length > 0) {
+    lines.push('## Event Timeline')
+    lines.push('')
+    for (const event of report.timeline) {
+      const icon = event.severity === 'critical' ? '🔴' : event.severity === 'warning' ? '🟡' : '🔵'
+      lines.push(`- **${event.timestamp}** ${icon} ${event.title} — ${event.description} (\`${event.source}\`)`)
+    }
+    lines.push('')
+  }
+
   lines.push(`## Findings (${report.findings.length})`)
   lines.push('')
 
