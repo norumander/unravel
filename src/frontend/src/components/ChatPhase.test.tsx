@@ -29,7 +29,7 @@ describe('ChatPhase', () => {
   })
 
   it('renders chat input and send button', () => {
-    render(<ChatPhase sessionId="test-session" />)
+    render(<ChatPhase sessionId="test-session" report={null} />)
     expect(screen.getByTestId('chat-input')).toBeInTheDocument()
     expect(screen.getByTestId('send-button')).toBeInTheDocument()
   })
@@ -45,7 +45,7 @@ describe('ChatPhase', () => {
       ),
     )
 
-    render(<ChatPhase sessionId="test-session" />)
+    render(<ChatPhase sessionId="test-session" report={null} />)
 
     const input = screen.getByTestId('chat-input')
     const button = screen.getByTestId('send-button')
@@ -71,7 +71,7 @@ describe('ChatPhase', () => {
       ),
     )
 
-    render(<ChatPhase sessionId="test-session" />)
+    render(<ChatPhase sessionId="test-session" report={null} />)
 
     const input = screen.getByTestId('chat-input')
     fireEvent.change(input, { target: { value: 'Check the logs' } })
@@ -91,7 +91,7 @@ describe('ChatPhase', () => {
       ),
     )
 
-    render(<ChatPhase sessionId="test-session" />)
+    render(<ChatPhase sessionId="test-session" report={null} />)
 
     fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'hello' } })
     fireEvent.click(screen.getByTestId('send-button'))
@@ -103,7 +103,7 @@ describe('ChatPhase', () => {
   })
 
   it('disables send button when input is empty', () => {
-    render(<ChatPhase sessionId="test-session" />)
+    render(<ChatPhase sessionId="test-session" report={null} />)
     expect(screen.getByTestId('send-button')).toBeDisabled()
   })
 })

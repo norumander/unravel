@@ -4,12 +4,7 @@ WORKDIR /app
 
 # Install dependencies first for layer caching
 COPY pyproject.toml .
-RUN pip install --no-cache-dir $(python -c "
-import tomllib
-with open('pyproject.toml', 'rb') as f:
-    deps = tomllib.load(f)['project']['dependencies']
-print(' '.join(deps))
-")
+RUN pip install --no-cache-dir $(python -c "import tomllib; f=open('pyproject.toml','rb'); deps=tomllib.load(f)['project']['dependencies']; print(' '.join(deps))")
 
 COPY app/ app/
 
