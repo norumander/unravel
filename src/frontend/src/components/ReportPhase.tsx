@@ -10,6 +10,7 @@ interface ReportPhaseProps {
   signalSummary: Record<string, number>
   onReportComplete: (report: DiagnosticReport) => void
   onFileSelect?: (path: string, excerpt?: string) => void
+  onToast?: (type: 'warning' | 'error', message: string) => void
 }
 
 const SEVERITY_ORDER = { critical: 0, warning: 1, info: 2 } as const
@@ -148,6 +149,7 @@ export function ReportPhase({
   signalSummary,
   onReportComplete,
   onFileSelect,
+  onToast,
 }: ReportPhaseProps) {
   const [report, setReport] = useState<DiagnosticReport | null>(null)
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all')
@@ -171,6 +173,8 @@ export function ReportPhase({
   const { isStreaming, error, startStream, stopStream } = useSSE({
     onChunk: handleChunk,
     onEvent: handleEvent,
+    onWarning: useCallback((msg: string) => onToast?.('warning', msg), [onToast]),
+    onError: useCallback((msg: string) => onToast?.('error', msg), [onToast]),
   })
 
   useEffect(() => {

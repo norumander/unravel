@@ -4,6 +4,7 @@ import { ReportPhase } from './components/ReportPhase'
 import { ChatPhase } from './components/ChatPhase'
 import { FileViewer } from './components/FileViewer'
 import FileExplorer from './components/FileExplorer'
+import { ToastContainer, useToast } from './components/Toast'
 import type { BundleManifest, DiagnosticReport } from './types/api'
 
 type AppPhase = 'upload' | 'dashboard'
@@ -15,6 +16,7 @@ function App() {
   const [signalSummary, setSignalSummary] = useState<Record<string, number>>({})
   const [report, setReport] = useState<DiagnosticReport | null>(null)
   const [selectedFile, setSelectedFile] = useState<{ path: string; excerpt?: string } | null>(null)
+  const { toasts, addToast, dismissToast } = useToast()
 
   const handleUploadComplete = useCallback(
     (sid: string, m: BundleManifest, ss: Record<string, number>) => {
@@ -46,6 +48,7 @@ function App() {
   if (phase === 'upload') {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-4">
+        <ToastContainer toasts={toasts} onDismiss={dismissToast} />
         <div className="mb-10 text-center">
           <h1 className="text-3xl font-bold tracking-tight text-zinc-50">Unravel</h1>
           <div className="mx-auto mt-3 mb-4 h-0.5 w-10 rounded-full bg-teal-500" />
@@ -61,6 +64,7 @@ function App() {
   // Dashboard phase — sidebar + main content
   return (
     <div className="flex h-screen bg-zinc-950">
+      <ToastContainer toasts={toasts} onDismiss={dismissToast} />
       {/* Sidebar */}
       <aside className="flex w-72 flex-shrink-0 flex-col border-r border-zinc-800 bg-zinc-900">
         {/* Sidebar header */}
@@ -113,11 +117,12 @@ function App() {
               signalSummary={signalSummary}
               onReportComplete={handleReportComplete}
               onFileSelect={(path, excerpt) => setSelectedFile({ path, excerpt })}
+              onToast={addToast}
             />
           )}
 
           {/* Chat — appears after report is ready */}
-          {report && sessionId && <ChatPhase sessionId={sessionId} report={report} />}
+          {report && sessionId && <ChatPhase sessionId={sessionId} report={report} onToast={addToast} />}
         </div>
       </main>
 

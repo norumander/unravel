@@ -5,6 +5,7 @@ import { useSSE } from '../hooks/useSSE'
 interface ChatPhaseProps {
   sessionId: string
   report: DiagnosticReport | null
+  onToast?: (type: 'warning' | 'error', message: string) => void
 }
 
 function generateSuggestions(report: DiagnosticReport): string[] {
@@ -240,7 +241,7 @@ function formatInline(text: string): React.ReactNode[] {
 
 // --- Chat component ---
 
-export function ChatPhase({ sessionId, report }: ChatPhaseProps) {
+export function ChatPhase({ sessionId, report, onToast }: ChatPhaseProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [streamingContent, setStreamingContent] = useState('')
@@ -282,6 +283,8 @@ export function ChatPhase({ sessionId, report }: ChatPhaseProps) {
   const { isStreaming, error, startStream } = useSSE({
     onChunk: handleChunk,
     onEvent: handleEvent,
+    onWarning: useCallback((msg: string) => onToast?.('warning', msg), [onToast]),
+    onError: useCallback((msg: string) => onToast?.('error', msg), [onToast]),
     onDone: scrollToBottom,
   })
 
