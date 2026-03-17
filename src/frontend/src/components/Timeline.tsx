@@ -47,7 +47,12 @@ export function Timeline({ events }: TimelineProps) {
 
         <div className="space-y-4" role="list">
           {events.map((event, idx) => (
-            <div key={idx} role="listitem" className="relative flex gap-4 pl-6">
+            <div
+              key={idx}
+              role="listitem"
+              className="animate-fade-in-up relative flex gap-4 pl-6"
+              style={{ animationDelay: `${idx * 60}ms` }}
+            >
               {/* Dot on the line */}
               <div
                 className={`absolute left-0 top-1.5 h-3 w-3 -translate-x-1/2 rounded-full border-2 ${SEVERITY_DOT[event.severity]}`}
