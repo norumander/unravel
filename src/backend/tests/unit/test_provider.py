@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.llm.provider import LLMError, get_provider
+from app.llm.provider import LLMError, get_max_output_tokens, get_provider
 
 
 class TestGetProviderFactory:
@@ -84,6 +84,22 @@ class TestOpenAIProvider:
         with patch.dict(os.environ, env, clear=True):
             provider = get_provider()
             assert provider.model_name == "gpt-4-turbo"
+
+
+class TestGetMaxOutputTokens:
+    def test_default_value(self):
+        with patch.dict(os.environ, {}, clear=True):
+            assert get_max_output_tokens() == 8192
+
+    def test_reads_env_at_call_time(self):
+        with patch.dict(os.environ, {"LLM_MAX_TOKENS": "4096"}):
+            assert get_max_output_tokens() == 4096
+
+    def test_changes_reflected_immediately(self):
+        with patch.dict(os.environ, {"LLM_MAX_TOKENS": "1000"}):
+            assert get_max_output_tokens() == 1000
+        with patch.dict(os.environ, {"LLM_MAX_TOKENS": "2000"}):
+            assert get_max_output_tokens() == 2000
 
 
 class TestLLMError:

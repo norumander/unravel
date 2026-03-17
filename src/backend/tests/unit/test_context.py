@@ -180,3 +180,92 @@ class TestAssembleContextTruncation:
 
         assert ctx.manifest.total_files == 1
         assert ctx.manifest.files[0].path == "bundle/events.json"
+
+
+class TestAssembleContextEdgeCases:
+    def test_zero_budget_excludes_all_signals(self):
+        """X-14: A zero token budget should exclude all signal types."""
+        bf_events, data_events = _make_file(
+            "bundle/events.json", "event data", SignalType.events
+        )
+        bf_logs, data_logs = _make_file(
+            "bundle/logs/pod.log", "log data", SignalType.pod_logs
+        )
+        bf_cluster, data_cluster = _make_file(
+            "bundle/cluster/info.json", "cluster info", SignalType.cluster_info
+        )
+
+        classified = {
+            SignalType.events: [bf_events],
+            SignalType.pod_logs: [bf_logs],
+            SignalType.cluster_info: [bf_cluster],
+        }
+        files = {
+            bf_events.path: data_events,
+            bf_logs.path: data_logs,
+            bf_cluster.path: data_cluster,
+        }
+
+        ctx = assemble_context(classified, files, token_budget=0)
+
+        assert len(ctx.signal_contents) == 0
+        assert ctx.truncation_notes is not None
+        for signal_type in [SignalType.events, SignalType.pod_logs, SignalType.cluster_info]:
+            assert signal_type.value in ctx.truncation_notes
+
+    def test_truncation_preserves_tail_content(self):
+        """X-16: Truncation should keep the tail (most recent lines), not the head."""
+        lines = [f"line {i}" for i in range(1, 101)]
+        content = "\n".join(lines)
+        bf, data = _make_file("bundle/events.json", content, SignalType.events)
+
+        classified = {SignalType.events: [bf]}
+        files = {bf.path: data}
+
+        # Use a tiny budget that forces truncation
+        budget = 20  # 20 tokens = 80 chars — only room for a few lines
+        ctx = assemble_context(classified, files, token_budget=budget)
+
+        result = ctx.signal_contents.get(SignalType.events, "")
+        assert "line 100" in result
+        assert "line 1\n" not in result
+
+    def test_binary_content_decoded_with_replacement(self):
+        """X-17: Invalid UTF-8 bytes should be decoded with the replacement character."""
+        raw_bytes = b"\xff\xfe invalid utf-8 bytes \xff"
+        bf = BundleFile(
+            path="bundle/events.bin",
+            size_bytes=len(raw_bytes),
+            signal_type=SignalType.events,
+        )
+
+        classified = {SignalType.events: [bf]}
+        files = {bf.path: raw_bytes}
+
+        ctx = assemble_context(classified, files)
+
+        result = ctx.signal_contents[SignalType.events]
+        assert "\ufffd" in result
+
+    def test_missing_file_in_files_dict_skipped(self):
+        """X-18: A classified file whose path is absent from files dict should be skipped."""
+        bf_present, data_present = _make_file(
+            "bundle/events.json", "event data", SignalType.events
+        )
+        bf_missing = BundleFile(
+            path="bundle/events_missing.json",
+            size_bytes=100,
+            signal_type=SignalType.events,
+        )
+
+        classified = {SignalType.events: [bf_present, bf_missing]}
+        files = {bf_present.path: data_present}
+        # bf_missing.path is intentionally NOT in files
+
+        ctx = assemble_context(classified, files)
+
+        # Should not raise; present file content should still appear
+        result = ctx.signal_contents[SignalType.events]
+        assert "event data" in result
+        # The missing file should simply be absent from the output
+        assert "events_missing.json" not in result

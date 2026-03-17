@@ -30,7 +30,7 @@ class TestParseBundle:
             "bundle/cluster-info/nodes.json": b'{"nodes": []}',
         }
         tar_data = _make_tar_gz(files)
-        manifest, extracted = parse_bundle(tar_data)
+        manifest, extracted, _ = parse_bundle(tar_data)
 
         assert manifest.total_files == 2
         assert manifest.total_size_bytes == len(b"log line 1\nlog line 2") + len(
@@ -42,14 +42,14 @@ class TestParseBundle:
     def test_manifest_file_paths_match(self):
         files = {"a/b/c.txt": b"hello"}
         tar_data = _make_tar_gz(files)
-        manifest, _ = parse_bundle(tar_data)
+        manifest, _, _ = parse_bundle(tar_data)
 
         assert manifest.files[0].path == "a/b/c.txt"
         assert manifest.files[0].size_bytes == 5
 
     def test_empty_archive_returns_empty_manifest(self):
         tar_data = _make_tar_gz({})
-        manifest, extracted = parse_bundle(tar_data)
+        manifest, extracted, _ = parse_bundle(tar_data)
 
         assert manifest.total_files == 0
         assert manifest.total_size_bytes == 0
@@ -60,7 +60,7 @@ class TestParseBundle:
             "bundle/deep/nested/dir/file.txt": b"deep content",
         }
         tar_data = _make_tar_gz(files)
-        manifest, extracted = parse_bundle(tar_data)
+        manifest, extracted, _ = parse_bundle(tar_data)
 
         assert manifest.total_files == 1
         assert "bundle/deep/nested/dir/file.txt" in extracted
@@ -78,7 +78,7 @@ class TestParseBundle:
             file_info.size = len(file_data)
             tar.addfile(file_info, io.BytesIO(file_data))
 
-        manifest, extracted = parse_bundle(buf.getvalue())
+        manifest, extracted, _ = parse_bundle(buf.getvalue())
         assert manifest.total_files == 1
         assert len(extracted) == 1
 
@@ -128,10 +128,11 @@ class TestPathTraversal:
             safe_info.size = len(safe_data)
             tar.addfile(safe_info, io.BytesIO(safe_data))
 
-        manifest, extracted = parse_bundle(buf.getvalue())
+        manifest, extracted, warnings = parse_bundle(buf.getvalue())
         assert manifest.total_files == 1
         assert "bundle/safe.txt" in extracted
         assert "../../etc/passwd" not in extracted
+        assert any("unsafe path" in w for w in warnings)
 
     def test_absolute_path_skipped(self):
         buf = io.BytesIO()
@@ -141,7 +142,7 @@ class TestPathTraversal:
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
 
-        manifest, extracted = parse_bundle(buf.getvalue())
+        manifest, extracted, _ = parse_bundle(buf.getvalue())
         assert manifest.total_files == 0
         assert len(extracted) == 0
 
@@ -153,6 +154,110 @@ class TestPathTraversal:
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
 
-        manifest, extracted = parse_bundle(buf.getvalue())
+        manifest, extracted, _ = parse_bundle(buf.getvalue())
         assert manifest.total_files == 0
         assert len(extracted) == 0
+
+
+from unittest.mock import patch
+
+from app.bundle.parser import MAX_SINGLE_FILE_SIZE
+
+
+class TestSingleFileSizeLimit:
+    def test_file_over_max_single_size_skipped_with_warning(self):
+        """U-16: A file whose declared size exceeds MAX_SINGLE_FILE_SIZE is skipped."""
+        # Patch the limit to a small value so we don't need real 100MB data.
+        tar_data = _make_tar_gz({"bundle/huge.bin": b"x" * 20})
+
+        with patch("app.bundle.parser.MAX_SINGLE_FILE_SIZE", 10):
+            manifest, extracted, warnings = parse_bundle(tar_data)
+
+        assert manifest.total_files == 0
+        assert len(extracted) == 0
+        assert any("exceeds" in w for w in warnings)
+
+    def test_file_at_exactly_max_single_size_accepted(self):
+        """A file whose declared size equals MAX_SINGLE_FILE_SIZE is accepted."""
+        # With patched limit of 10, a 10-byte file should be accepted.
+        tar_data = _make_tar_gz({"bundle/borderline.bin": b"x" * 10})
+
+        with patch("app.bundle.parser.MAX_SINGLE_FILE_SIZE", 10):
+            manifest, extracted, warnings = parse_bundle(tar_data)
+
+        assert manifest.total_files == 1
+        assert "bundle/borderline.bin" in extracted
+
+
+class TestFileCountLimit:
+    def test_stops_at_max_file_count_with_warning(self):
+        """U-17: Extraction stops at MAX_FILE_COUNT and emits a warning."""
+        # Patch MAX_FILE_COUNT to a small value so we don't need 10,001 files.
+        files = {f"bundle/file{i}.txt": b"data" for i in range(5)}
+        tar_data = _make_tar_gz(files)
+
+        with patch("app.bundle.parser.MAX_FILE_COUNT", 3):
+            manifest, extracted, warnings = parse_bundle(tar_data)
+
+        assert manifest.total_files == 3
+        assert len(extracted) == 3
+        assert any("remaining files skipped" in w for w in warnings)
+
+
+class TestDeclaredVsActualSize:
+    def test_declared_size_smaller_than_actual_reads_declared_amount(self):
+        """U-18: When declared size < actual content, only declared bytes are extracted."""
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            actual_data = b"0123456789"  # 10 bytes
+            info = tarfile.TarInfo(name="bundle/partial.txt")
+            info.size = 5  # declare only 5
+            tar.addfile(info, io.BytesIO(actual_data))
+
+        manifest, extracted, _ = parse_bundle(buf.getvalue())
+        assert manifest.total_files == 1
+        assert len(extracted["bundle/partial.txt"]) == 5
+
+
+class TestParseWarnings:
+    def test_no_warnings_for_clean_bundle(self):
+        """A normal bundle produces no warnings."""
+        files = {
+            "bundle/app.log": b"all good",
+            "bundle/config.yaml": b"key: value",
+        }
+        tar_data = _make_tar_gz(files)
+        _, _, warnings = parse_bundle(tar_data)
+        assert warnings == []
+
+    def test_multiple_warnings_accumulated(self):
+        """A bundle with both an unsafe path and an oversized file returns multiple warnings."""
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            # 1) Unsafe traversal path
+            evil_data = b"evil"
+            evil_info = tarfile.TarInfo(name="../../etc/shadow")
+            evil_info.size = len(evil_data)
+            tar.addfile(evil_info, io.BytesIO(evil_data))
+
+            # 2) Oversized file — actual data is 20 bytes, patched limit will be 10
+            big_data = b"x" * 20
+            big_info = tarfile.TarInfo(name="bundle/big.bin")
+            big_info.size = len(big_data)
+            tar.addfile(big_info, io.BytesIO(big_data))
+
+            # 3) A normal file to confirm it still works
+            ok_data = b"fine"
+            ok_info = tarfile.TarInfo(name="bundle/ok.txt")
+            ok_info.size = len(ok_data)
+            tar.addfile(ok_info, io.BytesIO(ok_data))
+
+        with patch("app.bundle.parser.MAX_SINGLE_FILE_SIZE", 10):
+            manifest, extracted, warnings = parse_bundle(buf.getvalue())
+
+        assert len(warnings) >= 2
+        assert any("unsafe path" in w for w in warnings)
+        assert any("exceeds" in w for w in warnings)
+        # The normal file should still be extracted
+        assert manifest.total_files == 1
+        assert "bundle/ok.txt" in extracted

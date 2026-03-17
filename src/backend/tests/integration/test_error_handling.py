@@ -1,48 +1,19 @@
 """Integration tests for LLM error handling and resilience."""
 
-import io
 import json
-import tarfile
 from unittest.mock import MagicMock, patch
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 
-from app.api.routes import reset_provider
 from app.llm.provider import LLMError
-from app.main import app
 from app.sessions.store import session_store
 
-
-def _make_tar_gz(files: dict[str, bytes]) -> bytes:
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for name, data in files.items():
-            info = tarfile.TarInfo(name=name)
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-    return buf.getvalue()
-
-
-@pytest.fixture(autouse=True)
-def clear_state():
-    session_store._sessions.clear()
-    reset_provider()
-    yield
-    session_store._sessions.clear()
-    reset_provider()
-
-
-@pytest.fixture
-async def client():
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as c:
-        yield c
+from .conftest import make_tar_gz
 
 
 @pytest.fixture
 def sample_bundle():
-    return _make_tar_gz({"bundle/events.json": b'[{"reason":"test"}]'})
+    return make_tar_gz({"bundle/events.json": b'[{"reason":"test"}]'})
 
 
 async def _upload(client, bundle):

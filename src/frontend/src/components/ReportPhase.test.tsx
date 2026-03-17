@@ -66,7 +66,12 @@ describe('ReportPhase', () => {
     )
 
     render(
-      <ReportPhase sessionId="test-session" onReportComplete={mockOnReportComplete} />,
+      <ReportPhase
+        sessionId="test-session"
+        manifest={{ total_files: 10, total_size_bytes: 5242880, files: [] }}
+        signalSummary={{ events: 3, pod_logs: 5 }}
+        onReportComplete={mockOnReportComplete}
+      />,
     )
 
     await waitFor(() => {
@@ -87,7 +92,12 @@ describe('ReportPhase', () => {
     )
 
     render(
-      <ReportPhase sessionId="test-session" onReportComplete={mockOnReportComplete} />,
+      <ReportPhase
+        sessionId="test-session"
+        manifest={{ total_files: 10, total_size_bytes: 5242880, files: [] }}
+        signalSummary={{ events: 3, pod_logs: 5 }}
+        onReportComplete={mockOnReportComplete}
+      />,
     )
 
     await waitFor(() => {

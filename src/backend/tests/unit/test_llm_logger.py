@@ -110,3 +110,28 @@ class TestLLMCallLogger:
         from datetime import datetime
 
         datetime.fromisoformat(entry["timestamp"])
+
+
+class TestTrackerEdgeCases:
+    def test_exception_reraised_after_logging(self, capsys):
+        from app.logging.llm_logger import llm_logger
+
+        with pytest.raises(ValueError, match="boom"):
+            with llm_logger.track("s1", "analyze", "anthropic", "claude-3") as tracker:
+                raise ValueError("boom")
+
+        captured = capsys.readouterr()
+        entry = json.loads(captured.out.strip())
+        assert entry["status"] == "error"
+
+    def test_token_counts_included_in_log(self, capsys):
+        from app.logging.llm_logger import llm_logger
+
+        with llm_logger.track("s1", "analyze", "anthropic", "claude-3") as tracker:
+            tracker.input_tokens = 500
+            tracker.output_tokens = 200
+
+        captured = capsys.readouterr()
+        entry = json.loads(captured.out.strip())
+        assert entry["input_tokens"] == 500
+        assert entry["output_tokens"] == 200

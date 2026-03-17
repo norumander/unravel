@@ -6,41 +6,12 @@ import pytest
 
 from app.llm.openai_provider import OpenAIProvider
 from app.llm.provider import LLMError
-from app.models.schemas import (
-    AnalysisContext,
-    BundleFile,
-    BundleManifest,
-    ChatMessage,
-    SignalType,
-)
+from app.models.schemas import ChatMessage
 
 
 @pytest.fixture
 def provider():
     return OpenAIProvider(api_key="test-key")
-
-
-@pytest.fixture
-def sample_context():
-    manifest = BundleManifest(
-        total_files=1,
-        total_size_bytes=100,
-        files=[BundleFile(path="events.json", size_bytes=100, signal_type=SignalType.events)],
-    )
-    return AnalysisContext(
-        signal_contents={SignalType.events: "event data"},
-        manifest=manifest,
-    )
-
-
-@pytest.fixture
-def mock_report_json():
-    return (
-        '{"executive_summary":"Test summary","findings":[{'
-        '"severity":"warning","title":"Test","description":"Desc",'
-        '"root_cause":"Cause","remediation":"Fix","source_signals":["events"]'
-        '}],"signal_types_analyzed":["events"],"truncation_notes":null}'
-    )
 
 
 class TestAnalyze:
@@ -145,3 +116,57 @@ class TestChat:
                 collected += text
 
             assert "crash-looping" in collected
+
+
+class TestMapOpenaiError:
+    """Tests for _map_openai_error covering all exception branches."""
+
+    def test_rate_limit_error_mapped(self):
+        """P-29: RateLimitError is mapped to LLMError with 'rate limit' message."""
+        import openai
+
+        from app.llm.openai_provider import _map_openai_error
+
+        exc = openai.RateLimitError(
+            message="rate limited",
+            response=MagicMock(status_code=429),
+            body={},
+        )
+        result = _map_openai_error(exc)
+        assert isinstance(result, LLMError)
+        assert "rate limit" in str(result).lower()
+
+    def test_connection_error_mapped(self):
+        """P-30: APIConnectionError is mapped to LLMError with 'connect' message."""
+        import openai
+
+        from app.llm.openai_provider import _map_openai_error
+
+        exc = openai.APIConnectionError(request=MagicMock())
+        result = _map_openai_error(exc)
+        assert isinstance(result, LLMError)
+        assert "connect" in str(result).lower()
+
+    def test_status_error_mapped(self):
+        """P-31: APIStatusError is mapped to LLMError containing the original message."""
+        import openai
+
+        from app.llm.openai_provider import _map_openai_error
+
+        exc = openai.APIStatusError(
+            message="server error",
+            response=MagicMock(status_code=500),
+            body={},
+        )
+        result = _map_openai_error(exc)
+        assert isinstance(result, LLMError)
+        assert "server error" in str(result).lower()
+
+    def test_unknown_error_mapped_to_generic(self):
+        """P-38: Non-openai exceptions are mapped to generic LLMError."""
+        from app.llm.openai_provider import _map_openai_error
+
+        exc = RuntimeError("something broke")
+        result = _map_openai_error(exc)
+        assert isinstance(result, LLMError)
+        assert "Unexpected" in str(result)

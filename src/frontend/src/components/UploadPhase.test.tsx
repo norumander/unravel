@@ -60,6 +60,7 @@ describe('UploadPhase', () => {
     const mockResponse = {
       session_id: 'test-session',
       manifest: { total_files: 5, total_size_bytes: 1024, files: [] },
+      signal_summary: { pod_logs: 3, events: 2 },
     }
 
     vi.stubGlobal(
@@ -77,7 +78,7 @@ describe('UploadPhase', () => {
     fireEvent.change(input, { target: { files: [file] } })
 
     await waitFor(() => {
-      expect(mockOnUploadComplete).toHaveBeenCalledWith('test-session', mockResponse.manifest)
+      expect(mockOnUploadComplete).toHaveBeenCalledWith('test-session', mockResponse.manifest, mockResponse.signal_summary)
     })
   })
 })
