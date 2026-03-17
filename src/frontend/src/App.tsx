@@ -14,7 +14,7 @@ function App() {
   const [manifest, setManifest] = useState<BundleManifest | null>(null)
   const [signalSummary, setSignalSummary] = useState<Record<string, number>>({})
   const [report, setReport] = useState<DiagnosticReport | null>(null)
-  const [selectedFile, setSelectedFile] = useState<string | null>(null)
+  const [selectedFile, setSelectedFile] = useState<{ path: string; excerpt?: string } | null>(null)
 
   const handleUploadComplete = useCallback(
     (sid: string, m: BundleManifest, ss: Record<string, number>) => {
@@ -48,6 +48,7 @@ function App() {
       <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-4">
         <div className="mb-10 text-center">
           <h1 className="text-3xl font-bold tracking-tight text-zinc-50">Unravel</h1>
+          <div className="mx-auto mt-3 mb-4 h-0.5 w-10 rounded-full bg-teal-500" />
           <p className="mt-1 text-sm text-zinc-500">
             AI-powered Kubernetes support bundle analysis
           </p>
@@ -85,7 +86,7 @@ function App() {
           {manifest && sessionId && (
             <FileExplorer
               manifest={manifest}
-              onFileSelect={setSelectedFile}
+              onFileSelect={(path) => setSelectedFile({ path })}
             />
           )}
         </div>
@@ -111,7 +112,7 @@ function App() {
               manifest={manifest}
               signalSummary={signalSummary}
               onReportComplete={handleReportComplete}
-              onFileSelect={setSelectedFile}
+              onFileSelect={(path, excerpt) => setSelectedFile({ path, excerpt })}
             />
           )}
 
@@ -124,7 +125,8 @@ function App() {
       {selectedFile && sessionId && (
         <FileViewer
           sessionId={sessionId}
-          filePath={selectedFile}
+          filePath={selectedFile.path}
+          highlightExcerpt={selectedFile.excerpt}
           onClose={() => setSelectedFile(null)}
         />
       )}
