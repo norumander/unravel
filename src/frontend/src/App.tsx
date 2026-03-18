@@ -3,6 +3,7 @@ import { UploadPhase } from './components/UploadPhase'
 import { ReportPhase } from './components/ReportPhase'
 import { ChatPhase } from './components/ChatPhase'
 import { FileViewer } from './components/FileViewer'
+import { LogoMark } from './components/Logo'
 import FileExplorer from './components/FileExplorer'
 import { ToastContainer, useToast } from './components/Toast'
 import type { BundleManifest, DiagnosticReport } from './types/api'
@@ -20,6 +21,9 @@ function App() {
 
   const handleUploadComplete = useCallback(
     (sid: string, m: BundleManifest, ss: Record<string, number>) => {
+      // Clear any stale state from a previous session
+      setReport(null)
+      setSelectedFile(null)
       setSessionId(sid)
       setManifest(m)
       setSignalSummary(ss)
@@ -49,10 +53,10 @@ function App() {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center bg-zinc-950 px-4">
         <ToastContainer toasts={toasts} onDismiss={dismissToast} />
-        <div className="mb-10 text-center">
-          <h1 className="text-3xl font-bold tracking-tight text-zinc-50">Unravel</h1>
-          <div className="mx-auto mt-3 mb-4 h-0.5 w-10 rounded-full bg-teal-500" />
-          <p className="mt-1 text-sm text-zinc-500">
+        <div className="mb-10 flex flex-col items-center text-center">
+          <LogoMark size={48} className="mb-4" />
+          <h1 className="text-3xl font-bold tracking-tight text-zinc-50">unravel</h1>
+          <p className="mt-2 text-sm text-zinc-500">
             AI-powered Kubernetes support bundle analysis
           </p>
         </div>
@@ -68,9 +72,12 @@ function App() {
       {/* Sidebar */}
       <aside className="flex w-72 flex-shrink-0 flex-col border-r border-zinc-800 bg-zinc-900">
         {/* Sidebar header */}
-        <div className="border-b border-zinc-800 px-4 py-4">
-          <h1 className="text-sm font-bold tracking-tight text-zinc-200">Unravel</h1>
-          <p className="mt-0.5 text-xs text-zinc-500">K8s Bundle Analyzer</p>
+        <div className="flex items-center gap-2.5 border-b border-zinc-800 px-4 py-4">
+          <LogoMark size={24} />
+          <div>
+            <h1 className="text-sm font-bold tracking-tight text-zinc-200">unravel</h1>
+            <p className="text-xs text-zinc-500">K8s Bundle Analyzer</p>
+          </div>
         </div>
 
         {/* Bundle info */}

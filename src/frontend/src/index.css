@@ -6,6 +6,15 @@
   --font-mono: 'IBM Plex Mono', monospace;
 }
 
+@keyframes shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+.animate-shimmer {
+  animation: shimmer 1.5s ease-in-out infinite;
+}
+
 @keyframes fade-in-up {
   from {
     opacity: 0;

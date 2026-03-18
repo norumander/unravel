@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { BundleManifest, DiagnosticReport, SSEEvent } from '../types/api'
+import type { BundleManifest, DiagnosticReport, LLMMeta, SSEEvent } from '../types/api'
 import { useSSE } from '../hooks/useSSE'
 import { downloadMarkdown } from '../utils/exportMarkdown'
 import { Timeline } from './Timeline'
@@ -24,6 +24,8 @@ interface Step {
   detail: string
   status: StepStatus
   subDetail?: string
+  /** Show an indeterminate shimmer bar when true */
+  showBar?: boolean
 }
 
 /** Rotating status hints shown during the AI analysis phase */
@@ -113,6 +115,8 @@ function ProgressStepper({ steps }: { steps: Step[] }) {
       <div className="space-y-0">
         {steps.map((step, idx) => {
           const hasSubDetail = step.status === 'active' && step.subDetail
+          const hasBar = step.status === 'active' && step.showBar
+          const lineHeight = hasSubDetail && hasBar ? 'h-20' : hasSubDetail || hasBar ? 'h-14' : 'h-6'
           return (
             <div key={step.label} className="flex gap-3">
               {/* Icon column with connecting line */}
@@ -121,9 +125,7 @@ function ProgressStepper({ steps }: { steps: Step[] }) {
                   <StepIcon status={step.status} />
                 </div>
                 {idx < steps.length - 1 && (
-                  <div className={`transition-colors duration-500 ${
-                    hasSubDetail ? 'h-14' : 'h-6'
-                  } border-l-2 ${
+                  <div className={`transition-colors duration-500 ${lineHeight} border-l-2 ${
                     step.status === 'done' ? 'border-teal-600' : 'border-zinc-800'
                   }`} />
                 )}
@@ -143,6 +145,11 @@ function ProgressStepper({ steps }: { steps: Step[] }) {
                 </span>
                 {step.detail && (
                   <span className="ml-2 text-sm text-zinc-500">&mdash; {step.detail}</span>
+                )}
+                {hasBar && (
+                  <div className="mt-2 h-1 w-48 overflow-hidden rounded-full bg-zinc-800">
+                    <div className="h-full w-2/5 animate-shimmer rounded-full bg-gradient-to-r from-transparent via-teal-500 to-transparent" />
+                  </div>
                 )}
                 {hasSubDetail && (
                   <div className="mt-1.5 text-xs text-zinc-500 animate-fade-in-up">
@@ -197,7 +204,7 @@ export function ReportPhase({
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all')
   const [analysisComplete, setAnalysisComplete] = useState(false)
   const [chunkCount, setChunkCount] = useState(0)
-  const [charCount, setCharCount] = useState(0)
+  const [llmMeta, setLlmMeta] = useState<LLMMeta | null>(null)
   const startedRef = useRef(false)
   const hintIndexRef = useRef(0)
   const [hintIndex, setHintIndex] = useState(0)
@@ -207,14 +214,16 @@ export function ReportPhase({
       if (event.type === 'report') {
         setReport(event.report)
         onReportComplete(event.report)
+      } else if (event.type === 'llm_meta') {
+        const { type: _, ...meta } = event
+        setLlmMeta(meta as LLMMeta)
       }
     },
     [onReportComplete],
   )
 
-  const handleChunk = useCallback((content: string) => {
+  const handleChunk = useCallback(() => {
     setChunkCount((c) => c + 1)
-    setCharCount((c) => c + content.length)
   }, [])
 
   const { isStreaming, error, startStream } = useSSE({
@@ -225,17 +234,18 @@ export function ReportPhase({
   })
 
   const isAnalyzing = isStreaming && chunkCount > 0
+  const stillWorking = isAnalyzing || (analysisComplete && !report)
   const elapsed = useElapsedSeconds(isAnalyzing)
 
-  // Rotate hints every 3 seconds during analysis
+  // Rotate hints every 3 seconds while actively working (streaming or building report)
   useEffect(() => {
-    if (!isAnalyzing) return
+    if (!stillWorking) return
     const id = setInterval(() => {
       hintIndexRef.current = (hintIndexRef.current + 1) % ANALYSIS_HINTS.length
       setHintIndex(hintIndexRef.current)
     }, 3000)
     return () => clearInterval(id)
-  }, [isAnalyzing])
+  }, [stillWorking])
 
   useEffect(() => {
     if (!isStreaming && startedRef.current && !report) {
@@ -254,14 +264,13 @@ export function ReportPhase({
   }, [sessionId, startStream])
 
   // Build analysis step detail & sub-detail
-  const analysisDetail = isAnalyzing
-    ? `${elapsed}s elapsed`
-    : ''
-  const analysisSubDetail = isAnalyzing
+  const analysisSubDetail = (isAnalyzing || (analysisComplete && !report))
     ? ANALYSIS_HINTS[hintIndex]
     : undefined
 
-  // Build stepper steps
+  const isWorking = isAnalyzing || (analysisComplete && !report)
+
+  // Build stepper steps — single "Analyzing" step with shimmer bar
   const steps: Step[] = [
     {
       label: 'Bundle extracted',
@@ -274,17 +283,21 @@ export function ReportPhase({
       status: 'done',
     },
     {
-      label: report || analysisComplete ? 'Analysis complete' : isAnalyzing ? 'Analyzing bundle' : 'Connecting to AI…',
-      detail: report || analysisComplete
-        ? `${charCount.toLocaleString()} chars processed`
-        : analysisDetail,
-      status: report || analysisComplete ? 'done' : isStreaming ? 'active' : 'pending',
+      label: report
+        ? 'Analysis complete'
+        : analysisComplete
+          ? 'Building report…'
+          : isAnalyzing
+            ? 'Analyzing bundle'
+            : 'Connecting to AI…',
+      detail: report
+        ? `${report.findings.length} findings — ${llmMeta ? (llmMeta.latency_ms / 1000).toFixed(1) + 's' : ''}`
+        : isWorking
+          ? `${elapsed}s`
+          : '',
+      status: report ? 'done' : isStreaming || analysisComplete ? 'active' : 'pending',
       subDetail: analysisSubDetail,
-    },
-    {
-      label: 'Building report',
-      detail: report ? `${report.findings.length} findings` : '',
-      status: report ? 'done' : analysisComplete ? 'active' : 'pending',
+      showBar: isWorking,
     },
   ]
 
@@ -487,12 +500,57 @@ export function ReportPhase({
             ))}
           </div>
 
-          {/* Footer */}
-          <div className="text-xs text-zinc-600">
-            Signal types analyzed: {report.signal_types_analyzed.join(', ')}
+          {/* Footer — signal types + LLM metrics */}
+          <div className="animate-fade-in-up space-y-3" style={{ animationDelay: '300ms' }}>
+            <div className="text-xs text-zinc-600">
+              Signal types analyzed: {report.signal_types_analyzed.join(', ')}
+            </div>
+
+            {llmMeta && (
+              <div
+                data-testid="llm-metrics"
+                className="rounded-lg border border-teal-500/15 bg-teal-500/[0.03] px-4 py-3"
+              >
+                <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-teal-500/70">
+                  LLM Observability
+                </div>
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                  <MetricItem label="Provider" value={llmMeta.provider} />
+                  <MetricItem label="Model" value={llmMeta.model} mono />
+                  <MetricItem
+                    label="Tokens"
+                    value={`${llmMeta.input_tokens.toLocaleString()} in / ${llmMeta.output_tokens.toLocaleString()} out`}
+                    mono
+                  />
+                  <MetricItem
+                    label="Latency"
+                    value={`${(llmMeta.latency_ms / 1000).toFixed(1)}s`}
+                    mono
+                  />
+                  {llmMeta.used_fallback && (
+                    <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-400">
+                      Fallback
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function MetricItem({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex items-baseline gap-1.5">
+      <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-500">
+        {label}
+      </span>
+      <span className={`text-xs text-zinc-200 ${mono ? 'font-mono' : ''}`}>
+        {value}
+      </span>
     </div>
   )
 }

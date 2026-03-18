@@ -47,9 +47,19 @@ export interface DiagnosticReport {
   timeline?: TimelineEvent[]
 }
 
+export interface LLMMeta {
+  provider: string
+  model: string
+  input_tokens: number
+  output_tokens: number
+  latency_ms: number
+  used_fallback: boolean
+}
+
 export type SSEEvent =
   | { type: 'chunk'; content: string }
   | { type: 'report'; report: DiagnosticReport }
+  | { type: 'llm_meta' } & LLMMeta
   | { type: 'tool_use'; name: string; file_path: string }
   | { type: 'done' }
   | { type: 'error'; message: string }

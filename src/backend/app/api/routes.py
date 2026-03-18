@@ -2,6 +2,7 @@
 
 import json
 import re
+import time
 
 from fastapi import APIRouter, HTTPException, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse
@@ -144,6 +145,9 @@ async def analyze_bundle(session_id: str):
 
             collected = ""
             primary_error = None
+            used_fallback = False
+            llm_meta: dict = {}
+            analysis_start = time.monotonic()
 
             try:
                 with llm_logger.track(
@@ -155,6 +159,13 @@ async def analyze_bundle(session_id: str):
 
                     tracker.input_tokens = provider.last_input_tokens
                     tracker.output_tokens = provider.last_output_tokens
+
+                llm_meta = {
+                    "provider": provider.provider_name,
+                    "model": provider.model_name,
+                    "input_tokens": provider.last_input_tokens,
+                    "output_tokens": provider.last_output_tokens,
+                }
 
             except LLMError as e:
                 primary_error = e
@@ -171,6 +182,7 @@ async def analyze_bundle(session_id: str):
                     "message": f"{provider.provider_name.title()} failed: {primary_error}. Falling back to {fallback.provider_name.title()}...",
                 })}
 
+                used_fallback = True
                 collected = ""
                 try:
                     with llm_logger.track(
@@ -183,12 +195,27 @@ async def analyze_bundle(session_id: str):
                         tracker.input_tokens = fallback.last_input_tokens
                         tracker.output_tokens = fallback.last_output_tokens
 
+                    llm_meta = {
+                        "provider": fallback.provider_name,
+                        "model": fallback.model_name,
+                        "input_tokens": fallback.last_input_tokens,
+                        "output_tokens": fallback.last_output_tokens,
+                    }
+
                 except LLMError as e:
                     yield {"data": json.dumps({
                         "type": "error",
                         "message": f"Both providers failed. {provider.provider_name.title()}: {primary_error}. {fallback.provider_name.title()}: {e}",
                     })}
                     return
+
+            # Emit LLM call metadata to the client
+            if llm_meta:
+                llm_meta["latency_ms"] = round(
+                    (time.monotonic() - analysis_start) * 1000
+                )
+                llm_meta["used_fallback"] = used_fallback
+                yield {"data": json.dumps({"type": "llm_meta", **llm_meta})}
 
             # Strip markdown fences that LLMs commonly wrap JSON in
             cleaned = _strip_markdown_fences(collected)
@@ -297,6 +324,9 @@ async def chat(session_id: str, body: ChatRequest):
 
         collected = ""
         primary_error = None
+        used_fallback = False
+        active_provider = provider
+        chat_start = time.monotonic()
 
         try:
             async for event in _run_chat(provider):
@@ -316,6 +346,8 @@ async def chat(session_id: str, body: ChatRequest):
                 "message": f"{provider.provider_name.title()} failed: {primary_error}. Falling back to {fallback.provider_name.title()}...",
             })}
 
+            used_fallback = True
+            active_provider = fallback
             collected = ""
             try:
                 async for event in _run_chat(fallback):
@@ -333,6 +365,17 @@ async def chat(session_id: str, body: ChatRequest):
             session.chat_history.append(
                 ChatMessage(role="assistant", content=collected)
             )
+
+        # Emit LLM call metadata to the client
+        yield {"data": json.dumps({
+            "type": "llm_meta",
+            "provider": active_provider.provider_name,
+            "model": active_provider.model_name,
+            "input_tokens": active_provider.last_input_tokens,
+            "output_tokens": active_provider.last_output_tokens,
+            "latency_ms": round((time.monotonic() - chat_start) * 1000),
+            "used_fallback": used_fallback,
+        })}
 
         yield {"data": json.dumps({"type": "done"})}
 

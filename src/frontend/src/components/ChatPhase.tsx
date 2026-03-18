@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ChatMessage, DiagnosticReport, SSEEvent } from '../types/api'
+import type { ChatMessage, DiagnosticReport, LLMMeta, SSEEvent } from '../types/api'
 import { useSSE } from '../hooks/useSSE'
 
 interface ChatPhaseProps {
@@ -248,6 +248,7 @@ export function ChatPhase({ sessionId, report, onToast }: ChatPhaseProps) {
   const [toolInProgress, setToolInProgress] = useState<string | null>(null)
   const [usedSuggestions, setUsedSuggestions] = useState<Set<string>>(new Set())
   const [suggestionsHidden, setSuggestionsHidden] = useState(false)
+  const [lastMeta, setLastMeta] = useState<LLMMeta | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const pendingContentRef = useRef('')
 
@@ -269,6 +270,9 @@ export function ChatPhase({ sessionId, report, onToast }: ChatPhaseProps) {
   const handleEvent = useCallback((event: SSEEvent) => {
     if (event.type === 'tool_use') {
       setToolInProgress(event.file_path)
+    } else if (event.type === 'llm_meta') {
+      const { type: _, ...meta } = event
+      setLastMeta(meta as LLMMeta)
     } else if (event.type === 'done') {
       const content = pendingContentRef.current
       if (content.trim()) {
@@ -464,8 +468,37 @@ export function ChatPhase({ sessionId, report, onToast }: ChatPhaseProps) {
         </div>
       )}
 
+      {/* LLM metrics */}
+      {lastMeta && !isStreaming && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-teal-500/10 bg-teal-500/[0.02] px-5 py-2 text-[10px]">
+          <span className="font-semibold uppercase tracking-widest text-teal-500/60">
+            {lastMeta.provider}
+          </span>
+          <span className="font-mono text-zinc-300">{lastMeta.model}</span>
+          <span className="font-mono text-zinc-400">
+            {lastMeta.input_tokens.toLocaleString()}+{lastMeta.output_tokens.toLocaleString()} tok
+          </span>
+          <span className="font-mono text-zinc-400">
+            {(lastMeta.latency_ms / 1000).toFixed(1)}s
+          </span>
+          {lastMeta.used_fallback && (
+            <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 font-semibold uppercase tracking-wide text-amber-400">
+              fallback
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Input area */}
       <div className="border-t border-zinc-800 p-4">
+        {suggestionsHidden && remainingSuggestions.length > 0 && !isStreaming && (
+          <button
+            onClick={() => setSuggestionsHidden(false)}
+            className="mb-2 text-xs text-zinc-500 hover:text-teal-400 transition-colors"
+          >
+            Show suggested questions
+          </button>
+        )}
         <div className="relative">
           <textarea
             data-testid="chat-input"
