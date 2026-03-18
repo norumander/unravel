@@ -6,7 +6,9 @@ import { FileViewer } from './components/FileViewer'
 import { LogoMark } from './components/Logo'
 import FileExplorer from './components/FileExplorer'
 import { ToastContainer, useToast } from './components/Toast'
-import type { BundleManifest, DiagnosticReport } from './types/api'
+import { downloadMarkdown } from './utils/exportMarkdown'
+import { buildAgentContext } from './utils/exportAgentContext'
+import type { BundleManifest, ChatMessage, DiagnosticReport } from './types/api'
 
 type AppPhase = 'upload' | 'dashboard'
 
@@ -17,6 +19,8 @@ function App() {
   const [signalSummary, setSignalSummary] = useState<Record<string, number>>({})
   const [report, setReport] = useState<DiagnosticReport | null>(null)
   const [selectedFile, setSelectedFile] = useState<{ path: string; excerpt?: string } | null>(null)
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
+  const [copied, setCopied] = useState(false)
   const { toasts, addToast, dismissToast } = useToast()
 
   const handleUploadComplete = useCallback(
@@ -24,6 +28,7 @@ function App() {
       // Clear any stale state from a previous session
       setReport(null)
       setSelectedFile(null)
+      setChatMessages([])
       setSessionId(sid)
       setManifest(m)
       setSignalSummary(ss)
@@ -46,6 +51,7 @@ function App() {
     setSignalSummary({})
     setReport(null)
     setSelectedFile(null)
+    setChatMessages([])
   }, [sessionId])
 
   // Upload phase — centered, minimal
@@ -103,7 +109,39 @@ function App() {
         </div>
 
         {/* Sidebar footer */}
-        <div className="border-t border-zinc-800 p-3">
+        <div className="space-y-2 border-t border-zinc-800 p-3">
+          {report && (
+            <>
+              <button
+                onClick={async () => {
+                  const ctx = buildAgentContext(report, chatMessages)
+                  await navigator.clipboard.writeText(ctx)
+                  setCopied(true)
+                  setTimeout(() => setCopied(false), 2000)
+                }}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-teal-600 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-teal-500"
+              >
+                {copied ? (
+                  'Copied to clipboard!'
+                ) : (
+                  <>
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="h-3.5 w-3.5">
+                      <path d="M4 11V3h8v8H4z" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M2 13V6" strokeLinecap="round" />
+                      <path d="M2 13h7" strokeLinecap="round" />
+                    </svg>
+                    Export to Agent
+                  </>
+                )}
+              </button>
+              <button
+                onClick={() => downloadMarkdown(report)}
+                className="w-full rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+              >
+                Download Report
+              </button>
+            </>
+          )}
           <button
             onClick={handleReset}
             className="w-full rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
@@ -129,7 +167,7 @@ function App() {
           )}
 
           {/* Chat — appears after report is ready */}
-          {report && sessionId && <ChatPhase sessionId={sessionId} report={report} onToast={addToast} />}
+          {report && sessionId && <ChatPhase sessionId={sessionId} report={report} onToast={addToast} onMessagesChange={setChatMessages} />}
         </div>
       </main>
 

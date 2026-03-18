@@ -6,6 +6,7 @@ interface ChatPhaseProps {
   sessionId: string
   report: DiagnosticReport | null
   onToast?: (type: 'warning' | 'error', message: string) => void
+  onMessagesChange?: (messages: ChatMessage[]) => void
 }
 
 function generateSuggestions(report: DiagnosticReport): string[] {
@@ -241,7 +242,7 @@ function formatInline(text: string): React.ReactNode[] {
 
 // --- Chat component ---
 
-export function ChatPhase({ sessionId, report, onToast }: ChatPhaseProps) {
+export function ChatPhase({ sessionId, report, onToast, onMessagesChange }: ChatPhaseProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [streamingContent, setStreamingContent] = useState('')
@@ -295,6 +296,10 @@ export function ChatPhase({ sessionId, report, onToast }: ChatPhaseProps) {
   useEffect(() => {
     if (streamingContent) scrollToBottom()
   }, [streamingContent, scrollToBottom])
+
+  useEffect(() => {
+    onMessagesChange?.(messages)
+  }, [messages, onMessagesChange])
 
   const sendMessage = useCallback(
     (text?: string) => {

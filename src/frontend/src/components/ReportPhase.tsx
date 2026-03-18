@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BundleManifest, DiagnosticReport, LLMMeta, SSEEvent } from '../types/api'
 import { useSSE } from '../hooks/useSSE'
-import { downloadMarkdown } from '../utils/exportMarkdown'
 import { Timeline } from './Timeline'
 
 interface ReportPhaseProps {
@@ -334,26 +333,15 @@ export function ReportPhase({
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <h2 className="text-lg font-semibold text-zinc-100">Diagnostic Report</h2>
-          {isStreaming && (
-            <span
-              data-testid="streaming-indicator"
-              role="status"
-              aria-label="Analysis in progress"
-              className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500"
-            />
-          )}
-        </div>
-        {report && (
-          <button
-            data-testid="download-report"
-            onClick={() => downloadMarkdown(report)}
-            className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-400 transition-all duration-200 hover:bg-zinc-800 hover:text-zinc-200 hover:shadow-lg hover:shadow-teal-500/10"
-          >
-            Download Report
-          </button>
+      <div className="flex items-center gap-2">
+        <h2 className="text-lg font-semibold text-zinc-100">Diagnostic Report</h2>
+        {isStreaming && (
+          <span
+            data-testid="streaming-indicator"
+            role="status"
+            aria-label="Analysis in progress"
+            className="inline-block h-2 w-2 animate-pulse rounded-full bg-emerald-500"
+          />
         )}
       </div>
 

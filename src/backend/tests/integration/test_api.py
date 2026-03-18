@@ -769,3 +769,180 @@ class TestFileRetrieval:
         assert response.status_code == 200
         assert response.headers["content-type"].startswith("text/plain")
         assert response.text == utf8_content
+
+
+class TestLLMMetaEvents:
+    """Tests for the llm_meta SSE event — AI observability surfaced to the client."""
+
+    @pytest.mark.asyncio
+    async def test_analyze_emits_llm_meta_event(self, client, sample_bundle):
+        """The analyze endpoint emits an llm_meta event with provider, model, tokens, and latency."""
+        upload_resp = await client.post(
+            "/api/upload",
+            files={"file": ("bundle.tar.gz", sample_bundle, "application/gzip")},
+        )
+        session_id = upload_resp.json()["session_id"]
+
+        mock_report = json.dumps({
+            "executive_summary": "Test",
+            "findings": [{
+                "severity": "warning", "title": "Test", "description": "D",
+                "root_cause": "C", "remediation": "F", "source_signals": ["events"],
+            }],
+            "signal_types_analyzed": ["events"],
+            "truncation_notes": None,
+        })
+
+        mock_provider = MagicMock()
+        mock_provider.provider_name = "openai"
+        mock_provider.model_name = "gpt-4o"
+        mock_provider.last_input_tokens = 1200
+        mock_provider.last_output_tokens = 400
+
+        async def mock_analyze(context):
+            yield mock_report
+
+        mock_provider.analyze = mock_analyze
+
+        with patch("app.api.routes._get_or_create_provider", return_value=mock_provider):
+            response = await client.get(f"/api/analyze/{session_id}")
+
+        events = [
+            json.loads(l.replace("data: ", "").replace("data:", ""))
+            for l in response.text.strip().split("\n") if l.startswith("data:")
+        ]
+        meta_events = [e for e in events if e.get("type") == "llm_meta"]
+        assert len(meta_events) == 1
+
+        meta = meta_events[0]
+        assert meta["provider"] == "openai"
+        assert meta["model"] == "gpt-4o"
+        assert meta["input_tokens"] == 1200
+        assert meta["output_tokens"] == 400
+        assert meta["latency_ms"] >= 0
+        assert meta["used_fallback"] is False
+
+    @pytest.mark.asyncio
+    async def test_chat_emits_llm_meta_event(self, client, sample_bundle):
+        """The chat endpoint emits an llm_meta event after each response."""
+        upload_resp = await client.post(
+            "/api/upload",
+            files={"file": ("bundle.tar.gz", sample_bundle, "application/gzip")},
+        )
+        session_id = upload_resp.json()["session_id"]
+
+        # Give the session a report so chat works
+        session = session_store.get(session_id)
+        session.report = DiagnosticReport.model_validate_json(json.dumps({
+            "executive_summary": "Test",
+            "findings": [],
+            "signal_types_analyzed": ["events"],
+            "truncation_notes": None,
+        }))
+
+        mock_provider = MagicMock()
+        mock_provider.provider_name = "anthropic"
+        mock_provider.model_name = "claude-test"
+        mock_provider.last_input_tokens = 500
+        mock_provider.last_output_tokens = 200
+
+        async def mock_chat(messages, tools, tool_handler):
+            yield "Here is my analysis."
+
+        mock_provider.chat = mock_chat
+
+        with patch("app.api.routes._get_or_create_provider", return_value=mock_provider):
+            response = await client.post(
+                f"/api/chat/{session_id}",
+                json={"message": "What happened?"},
+            )
+
+        events = [
+            json.loads(l.replace("data: ", "").replace("data:", ""))
+            for l in response.text.strip().split("\n") if l.startswith("data:")
+        ]
+        meta_events = [e for e in events if e.get("type") == "llm_meta"]
+        assert len(meta_events) == 1
+
+        meta = meta_events[0]
+        assert meta["provider"] == "anthropic"
+        assert meta["model"] == "claude-test"
+        assert meta["input_tokens"] == 500
+        assert meta["output_tokens"] == 200
+        assert meta["used_fallback"] is False
+
+
+class TestAnalyzeSignalSanitization:
+    """Tests for the AI output boundary — unknown signal types in LLM responses.
+
+    This verifies the full integration path: LLM returns JSON with invented
+    signal types → sanitizer normalizes them → Pydantic validates successfully
+    → client receives a valid report. Without sanitization, these would cause
+    a parse error and the user would see 'Failed to parse LLM response.'
+    """
+
+    @pytest.mark.asyncio
+    async def test_invented_signal_types_produce_valid_report(self, client, sample_bundle):
+        """LLM responses with unknown signal types are sanitized and parsed successfully."""
+        upload_resp = await client.post(
+            "/api/upload",
+            files={"file": ("bundle.tar.gz", sample_bundle, "application/gzip")},
+        )
+        session_id = upload_resp.json()["session_id"]
+
+        # LLM returns valid JSON but with invented signal types
+        mock_report = json.dumps({
+            "executive_summary": "Issues found.",
+            "findings": [
+                {
+                    "severity": "critical",
+                    "title": "OOM",
+                    "description": "Out of memory",
+                    "root_cause": "Low limits",
+                    "remediation": "Increase limits",
+                    "source_signals": ["pod_logs", "node_conditions"],  # node_conditions is invented
+                },
+                {
+                    "severity": "warning",
+                    "title": "Disk",
+                    "description": "Disk pressure",
+                    "root_cause": "Full disk",
+                    "remediation": "Clean up",
+                    "source_signals": ["pod_status", "deployment_health"],  # both invented
+                },
+            ],
+            "signal_types_analyzed": ["pod_logs", "node_conditions", "pod_status"],
+            "truncation_notes": None,
+        })
+
+        mock_provider = MagicMock()
+        mock_provider.provider_name = "openai"
+        mock_provider.model_name = "gpt-4o"
+        mock_provider.last_input_tokens = 100
+        mock_provider.last_output_tokens = 50
+
+        async def mock_analyze(context):
+            yield mock_report
+
+        mock_provider.analyze = mock_analyze
+
+        with patch("app.api.routes._get_or_create_provider", return_value=mock_provider):
+            response = await client.get(f"/api/analyze/{session_id}")
+
+        events = [
+            json.loads(l.replace("data: ", "").replace("data:", ""))
+            for l in response.text.strip().split("\n") if l.startswith("data:")
+        ]
+
+        # Should get a successful report, NOT a parse error
+        error_events = [e for e in events if e.get("type") == "error"]
+        assert len(error_events) == 0
+
+        report_events = [e for e in events if e.get("type") == "report"]
+        assert len(report_events) == 1
+
+        report = report_events[0]["report"]
+        # Invented types should be normalized to "other"
+        assert report["findings"][0]["source_signals"] == ["pod_logs", "other"]
+        assert report["findings"][1]["source_signals"] == ["other", "other"]
+        assert set(report["signal_types_analyzed"]) == {"pod_logs", "other"}

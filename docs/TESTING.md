@@ -48,6 +48,22 @@ cd src/frontend && npm run test:watch
 - **Frontend**: Test component state transitions with mocked SSE streams.
 - **No live LLM calls**: All LLM interactions use mocked/stubbed responses.
 
+### AI Output Boundary Tests
+
+The most critical test surface in an LLM-powered application is the **boundary between unpredictable AI output and the application's type system**. The LLM returns free-form JSON that must conform to our Pydantic schemas, but it regularly produces responses that are valid JSON yet violate the schema in subtle ways.
+
+**What we test at this boundary:**
+
+- **Invented enum values** (`TestSanitizeSignalTypes`): LLMs frequently produce signal type strings that don't exist in our `SignalType` enum (e.g., `node_conditions`, `pod_status`, `deployment_health`). The sanitizer normalizes these to `"other"` before Pydantic validation. Without this, the entire report would be rejected over a single bad enum value. Tests cover: valid types pass through, unknown types become `"other"`, missing keys tolerated, invalid JSON passed through for downstream handling.
+
+- **Malformed JSON** (`TestAnalyzeInvalidJson`): The LLM may return incomplete JSON, prose mixed with JSON, or truncated output. Integration tests verify the error is surfaced to the user rather than crashing.
+
+- **Markdown-wrapped JSON** (`TestAnalyzeMarkdownFences`): LLMs commonly wrap JSON in ` ```json ``` ` fences despite being told not to. The fence stripper handles this transparently.
+
+- **Full integration path** (`TestAnalyzeSignalSanitization`): Tests the complete chain — LLM returns JSON with invented signal types → sanitizer normalizes → Pydantic validates → client receives a valid report. This is the test that would have caught the production bug where reports failed to parse due to `node_conditions`.
+
+**Design principle**: The application must never fail because the LLM was "slightly creative" with its output. Tests verify graceful degradation at every point where AI output enters the type system.
+
 ### What We Don't Test
 - Live LLM API calls (non-deterministic, requires API key)
 - Docker Compose orchestration (manual verification)
