@@ -23,6 +23,38 @@ interface Step {
   label: string
   detail: string
   status: StepStatus
+  subDetail?: string
+}
+
+/** Rotating status hints shown during the AI analysis phase */
+const ANALYSIS_HINTS = [
+  'Scanning pod logs for errors…',
+  'Correlating events with resource states…',
+  'Checking resource limits and requests…',
+  'Identifying crash loops and restarts…',
+  'Analyzing cluster topology…',
+  'Cross-referencing signal types…',
+  'Mapping failure timeline…',
+  'Evaluating remediation options…',
+]
+
+function useElapsedSeconds(running: boolean): number {
+  const [elapsed, setElapsed] = useState(0)
+  const startRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (running) {
+      startRef.current = Date.now()
+      const tick = () => {
+        if (startRef.current) setElapsed(Math.floor((Date.now() - startRef.current) / 1000))
+      }
+      const id = setInterval(tick, 1000)
+      return () => clearInterval(id)
+    }
+    startRef.current = null
+  }, [running])
+
+  return elapsed
 }
 
 function formatBytes(bytes: number): string {
@@ -79,38 +111,48 @@ function ProgressStepper({ steps }: { steps: Step[] }) {
       className="rounded-xl border border-zinc-800 bg-zinc-900 p-6"
     >
       <div className="space-y-0">
-        {steps.map((step, idx) => (
-          <div key={step.label} className="flex gap-3">
-            {/* Icon column with connecting line */}
-            <div className="flex flex-col items-center">
-              <div className="relative flex-shrink-0">
-                <StepIcon status={step.status} />
+        {steps.map((step, idx) => {
+          const hasSubDetail = step.status === 'active' && step.subDetail
+          return (
+            <div key={step.label} className="flex gap-3">
+              {/* Icon column with connecting line */}
+              <div className="flex flex-col items-center">
+                <div className="relative flex-shrink-0">
+                  <StepIcon status={step.status} />
+                </div>
+                {idx < steps.length - 1 && (
+                  <div className={`transition-colors duration-500 ${
+                    hasSubDetail ? 'h-14' : 'h-6'
+                  } border-l-2 ${
+                    step.status === 'done' ? 'border-teal-600' : 'border-zinc-800'
+                  }`} />
+                )}
               </div>
-              {idx < steps.length - 1 && (
-                <div className={`h-6 border-l-2 transition-colors duration-500 ${
-                  step.status === 'done' ? 'border-teal-600' : 'border-zinc-800'
-                }`} />
-              )}
+              {/* Text column */}
+              <div className="pb-6">
+                <span
+                  className={`text-sm font-medium ${
+                    step.status === 'active'
+                      ? 'text-zinc-200'
+                      : step.status === 'done'
+                        ? 'text-zinc-300'
+                        : 'text-zinc-500'
+                  }`}
+                >
+                  {step.label}
+                </span>
+                {step.detail && (
+                  <span className="ml-2 text-sm text-zinc-500">&mdash; {step.detail}</span>
+                )}
+                {hasSubDetail && (
+                  <div className="mt-1.5 text-xs text-zinc-500 animate-fade-in-up">
+                    {step.subDetail}
+                  </div>
+                )}
+              </div>
             </div>
-            {/* Text column */}
-            <div className="pb-6">
-              <span
-                className={`text-sm font-medium ${
-                  step.status === 'active'
-                    ? 'text-zinc-200'
-                    : step.status === 'done'
-                      ? 'text-zinc-300'
-                      : 'text-zinc-500'
-                }`}
-              >
-                {step.label}
-              </span>
-              {step.detail && (
-                <span className="ml-2 text-sm text-zinc-500">&mdash; {step.detail}</span>
-              )}
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
@@ -154,7 +196,11 @@ export function ReportPhase({
   const [report, setReport] = useState<DiagnosticReport | null>(null)
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all')
   const [analysisComplete, setAnalysisComplete] = useState(false)
+  const [chunkCount, setChunkCount] = useState(0)
+  const [charCount, setCharCount] = useState(0)
   const startedRef = useRef(false)
+  const hintIndexRef = useRef(0)
+  const [hintIndex, setHintIndex] = useState(0)
 
   const handleEvent = useCallback(
     (event: SSEEvent) => {
@@ -166,16 +212,30 @@ export function ReportPhase({
     [onReportComplete],
   )
 
-  const handleChunk = useCallback(() => {
-    // Chunks are consumed silently — the stepper replaces raw text display
+  const handleChunk = useCallback((content: string) => {
+    setChunkCount((c) => c + 1)
+    setCharCount((c) => c + content.length)
   }, [])
 
-  const { isStreaming, error, startStream, stopStream } = useSSE({
+  const { isStreaming, error, startStream } = useSSE({
     onChunk: handleChunk,
     onEvent: handleEvent,
     onWarning: useCallback((msg: string) => onToast?.('warning', msg), [onToast]),
     onError: useCallback((msg: string) => onToast?.('error', msg), [onToast]),
   })
+
+  const isAnalyzing = isStreaming && chunkCount > 0
+  const elapsed = useElapsedSeconds(isAnalyzing)
+
+  // Rotate hints every 3 seconds during analysis
+  useEffect(() => {
+    if (!isAnalyzing) return
+    const id = setInterval(() => {
+      hintIndexRef.current = (hintIndexRef.current + 1) % ANALYSIS_HINTS.length
+      setHintIndex(hintIndexRef.current)
+    }, 3000)
+    return () => clearInterval(id)
+  }, [isAnalyzing])
 
   useEffect(() => {
     if (!isStreaming && startedRef.current && !report) {
@@ -184,14 +244,22 @@ export function ReportPhase({
   }, [isStreaming, report])
 
   useEffect(() => {
-    // Guard against StrictMode double-mount
+    // Start analysis stream. The ref guard prevents double-starting
+    // but we intentionally do NOT abort on cleanup — StrictMode's
+    // mount/unmount/remount cycle would kill the long-running SSE
+    // stream and the guard would prevent restarting it.
     if (startedRef.current) return
     startedRef.current = true
     startStream(`/api/analyze/${sessionId}`)
-    return () => {
-      stopStream()
-    }
-  }, [sessionId, startStream, stopStream])
+  }, [sessionId, startStream])
+
+  // Build analysis step detail & sub-detail
+  const analysisDetail = isAnalyzing
+    ? `${elapsed}s elapsed`
+    : ''
+  const analysisSubDetail = isAnalyzing
+    ? ANALYSIS_HINTS[hintIndex]
+    : undefined
 
   // Build stepper steps
   const steps: Step[] = [
@@ -206,14 +274,17 @@ export function ReportPhase({
       status: 'done',
     },
     {
-      label: report || analysisComplete ? 'Analysis complete' : 'Analyzing with AI...',
-      detail: '',
+      label: report || analysisComplete ? 'Analysis complete' : isAnalyzing ? 'Analyzing bundle' : 'Connecting to AI…',
+      detail: report || analysisComplete
+        ? `${charCount.toLocaleString()} chars processed`
+        : analysisDetail,
       status: report || analysisComplete ? 'done' : isStreaming ? 'active' : 'pending',
+      subDetail: analysisSubDetail,
     },
     {
       label: 'Building report',
-      detail: '',
-      status: report ? 'done' : 'pending',
+      detail: report ? `${report.findings.length} findings` : '',
+      status: report ? 'done' : analysisComplete ? 'active' : 'pending',
     },
   ]
 

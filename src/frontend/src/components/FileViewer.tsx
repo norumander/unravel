@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useMemo, useState } from 'react'
 
 interface FileViewerProps {
   sessionId: string
   filePath: string
+  highlightExcerpt?: string
   onClose: () => void
 }
 
-export function FileViewer({ sessionId, filePath, onClose }: FileViewerProps) {
+export function FileViewer({ sessionId, filePath, highlightExcerpt, onClose }: FileViewerProps) {
   const [content, setContent] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -65,6 +66,32 @@ export function FileViewer({ sessionId, filePath, onClose }: FileViewerProps) {
   }, [content])
 
   const lines = content?.split('\n') ?? []
+  const highlightRef = useRef<HTMLTableRowElement>(null)
+
+  // Determine which lines to highlight based on excerpt matching
+  const highlightedLines = useMemo(() => {
+    if (!highlightExcerpt || !content) return new Set<number>()
+    const excerptLines = highlightExcerpt.trim().split('\n').map(l => l.trim()).filter(Boolean)
+    const matched = new Set<number>()
+    for (let i = 0; i < lines.length; i++) {
+      const trimmedLine = lines[i].trim()
+      if (!trimmedLine) continue
+      for (const excerptLine of excerptLines) {
+        if (trimmedLine.includes(excerptLine) || excerptLine.includes(trimmedLine)) {
+          matched.add(i)
+          break
+        }
+      }
+    }
+    return matched
+  }, [highlightExcerpt, content, lines])
+
+  // Scroll to first highlighted line after content loads
+  useEffect(() => {
+    if (highlightedLines.size > 0 && highlightRef.current) {
+      highlightRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [highlightedLines])
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end">
@@ -157,14 +184,22 @@ export function FileViewer({ sessionId, filePath, onClose }: FileViewerProps) {
             <pre className="font-mono text-xs leading-relaxed">
               <table className="border-collapse">
                 <tbody>
-                  {lines.map((line, i) => (
-                    <tr key={i}>
-                      <td className="select-none pr-4 text-right align-top text-zinc-600">
-                        {i + 1}
-                      </td>
-                      <td className="whitespace-pre-wrap text-zinc-300">{line}</td>
-                    </tr>
-                  ))}
+                  {lines.map((line, i) => {
+                    const isHighlighted = highlightedLines.has(i)
+                    const isFirstHighlight = isHighlighted && !highlightedLines.has(i - 1)
+                    return (
+                      <tr
+                        key={i}
+                        ref={isFirstHighlight ? highlightRef : undefined}
+                        className={isHighlighted ? 'bg-amber-500/15' : undefined}
+                      >
+                        <td className={`select-none pr-4 text-right align-top ${isHighlighted ? 'text-amber-500' : 'text-zinc-600'}`}>
+                          {i + 1}
+                        </td>
+                        <td className={`whitespace-pre-wrap ${isHighlighted ? 'text-amber-200' : 'text-zinc-300'}`}>{line}</td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </pre>

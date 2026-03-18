@@ -46,3 +46,6 @@ docker-compose.override.yml
 # Temporary
 tmp/
 .tmp/
+
+# Superpowers brainstorming
+.superpowers/

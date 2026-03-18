@@ -193,6 +193,9 @@ async def analyze_bundle(session_id: str):
             # Strip markdown fences that LLMs commonly wrap JSON in
             cleaned = _strip_markdown_fences(collected)
 
+            # Sanitize LLM output — map unknown signal types to "other"
+            cleaned = _sanitize_signal_types(cleaned)
+
             # Parse the complete response into a DiagnosticReport
             try:
                 report = DiagnosticReport.model_validate_json(cleaned)
@@ -200,13 +203,21 @@ async def analyze_bundle(session_id: str):
                 yield {
                     "data": json.dumps({"type": "report", "report": report.model_dump()})
                 }
-            except Exception:
+            except Exception as exc:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error("Report parse failed: %s", exc)
+                logger.error("Raw LLM response (first 2000 chars): %s", cleaned[:2000])
                 yield {
                     "data": json.dumps({
                         "type": "error",
                         "message": "Failed to parse LLM response into structured report.",
                     })
                 }
+
+            # Send done event to flush the proxy buffer — without this,
+            # the report event can be lost when the connection closes
+            yield {"data": json.dumps({"type": "done"})}
         finally:
             session.analyzing = False
 
@@ -336,6 +347,37 @@ def _strip_markdown_fences(text: str) -> str:
     if match:
         return match.group(1).strip()
     return stripped
+
+
+_VALID_SIGNAL_TYPES = {"pod_logs", "cluster_info", "resource_definitions", "events", "node_status", "other"}
+
+
+def _sanitize_signal_types(text: str) -> str:
+    """Replace unknown signal type strings with 'other' in the JSON response.
+
+    LLMs occasionally invent signal types like 'node_conditions' or 'pod_status'
+    that don't match the SignalType enum, causing the entire report to fail
+    validation. This normalizes them before parsing.
+    """
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return text
+
+    for finding in data.get("findings", []):
+        if "source_signals" in finding:
+            finding["source_signals"] = [
+                s if s in _VALID_SIGNAL_TYPES else "other"
+                for s in finding["source_signals"]
+            ]
+
+    if "signal_types_analyzed" in data:
+        data["signal_types_analyzed"] = [
+            s if s in _VALID_SIGNAL_TYPES else "other"
+            for s in data["signal_types_analyzed"]
+        ]
+
+    return json.dumps(data)
 
 
 @router.delete("/sessions/{session_id}")

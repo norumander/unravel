@@ -37,7 +37,7 @@ class OpenAIProvider(LLMProvider):
     def __init__(self, api_key: str) -> None:
         super().__init__()
         self._client = openai.AsyncOpenAI(api_key=api_key)
-        self._model = os.environ.get("OPENAI_MODEL", "gpt-4o")
+        self._model = os.environ.get("OPENAI_MODEL") or "gpt-4o"
 
     @property
     def provider_name(self) -> str:
