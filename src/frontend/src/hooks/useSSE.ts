@@ -5,6 +5,7 @@ interface UseSSEOptions {
   onChunk?: (content: string) => void
   onEvent?: (event: SSEEvent) => void
   onError?: (message: string) => void
+  onWarning?: (message: string) => void
   onDone?: () => void
 }
 
@@ -24,12 +25,14 @@ export function useSSE(options: UseSSEOptions = {}): UseSSEReturn {
   const onChunkRef = useRef(options.onChunk)
   const onEventRef = useRef(options.onEvent)
   const onErrorRef = useRef(options.onError)
+  const onWarningRef = useRef(options.onWarning)
   const onDoneRef = useRef(options.onDone)
 
   useEffect(() => {
     onChunkRef.current = options.onChunk
     onEventRef.current = options.onEvent
     onErrorRef.current = options.onError
+    onWarningRef.current = options.onWarning
     onDoneRef.current = options.onDone
   })
 
@@ -95,6 +98,9 @@ export function useSSE(options: UseSSEOptions = {}): UseSSEReturn {
                   case 'error':
                     setError(event.message)
                     onErrorRef.current?.(event.message)
+                    break
+                  case 'warning':
+                    onWarningRef.current?.(event.message)
                     break
                   case 'done':
                     onDoneRef.current?.()

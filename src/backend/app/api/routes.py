@@ -11,7 +11,7 @@ from sse_starlette.sse import EventSourceResponse
 from app.analysis.context import assemble_context
 from app.bundle.classifier import classify_files
 from app.bundle.parser import BundleTooLargeError, InvalidBundleError, parse_bundle
-from app.llm.provider import TOOL_USE_SENTINEL, LLMError, get_provider
+from app.llm.provider import TOOL_USE_SENTINEL, LLMError, get_fallback_provider, get_provider
 from app.logging.llm_logger import llm_logger
 from app.models.schemas import ChatMessage, DiagnosticReport
 from app.sessions.store import SessionNotFoundError, session_store
@@ -143,6 +143,8 @@ async def analyze_bundle(session_id: str):
             )
 
             collected = ""
+            primary_error = None
+
             try:
                 with llm_logger.track(
                     session_id, "analyze", provider.provider_name, provider.model_name
@@ -155,11 +157,44 @@ async def analyze_bundle(session_id: str):
                     tracker.output_tokens = provider.last_output_tokens
 
             except LLMError as e:
-                yield {"data": json.dumps({"type": "error", "message": str(e)})}
-                return
+                primary_error = e
+
+            # If primary provider failed, try fallback
+            if primary_error is not None:
+                fallback = get_fallback_provider()
+                if fallback is None:
+                    yield {"data": json.dumps({"type": "error", "message": str(primary_error)})}
+                    return
+
+                yield {"data": json.dumps({
+                    "type": "warning",
+                    "message": f"{provider.provider_name.title()} failed: {primary_error}. Falling back to {fallback.provider_name.title()}...",
+                })}
+
+                collected = ""
+                try:
+                    with llm_logger.track(
+                        session_id, "analyze", fallback.provider_name, fallback.model_name
+                    ) as tracker:
+                        async for chunk in fallback.analyze(context):
+                            collected += chunk
+                            yield {"data": json.dumps({"type": "chunk", "content": chunk})}
+
+                        tracker.input_tokens = fallback.last_input_tokens
+                        tracker.output_tokens = fallback.last_output_tokens
+
+                except LLMError as e:
+                    yield {"data": json.dumps({
+                        "type": "error",
+                        "message": f"Both providers failed. {provider.provider_name.title()}: {primary_error}. {fallback.provider_name.title()}: {e}",
+                    })}
+                    return
 
             # Strip markdown fences that LLMs commonly wrap JSON in
             cleaned = _strip_markdown_fences(collected)
+
+            # Sanitize LLM output — map unknown signal types to "other"
+            cleaned = _sanitize_signal_types(cleaned)
 
             # Parse the complete response into a DiagnosticReport
             try:
@@ -168,13 +203,21 @@ async def analyze_bundle(session_id: str):
                 yield {
                     "data": json.dumps({"type": "report", "report": report.model_dump()})
                 }
-            except Exception:
+            except Exception as exc:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error("Report parse failed: %s", exc)
+                logger.error("Raw LLM response (first 2000 chars): %s", cleaned[:2000])
                 yield {
                     "data": json.dumps({
                         "type": "error",
                         "message": "Failed to parse LLM response into structured report.",
                     })
                 }
+
+            # Send done event to flush the proxy buffer — without this,
+            # the report event can be lost when the connection closes
+            yield {"data": json.dumps({"type": "done"})}
         finally:
             session.analyzing = False
 
@@ -233,15 +276,14 @@ async def chat(session_id: str, body: ChatRequest):
                 return content.decode("utf-8", errors="replace")
             return f"Unknown tool: {name}"
 
-        collected = ""
-        try:
+        async def _run_chat(p):
+            nonlocal collected
             with llm_logger.track(
-                session_id, "chat", provider.provider_name, provider.model_name
+                session_id, "chat", p.provider_name, p.model_name
             ) as tracker:
-                async for chunk in provider.chat(
+                async for chunk in p.chat(
                     messages, [GET_FILE_CONTENTS_TOOL], tool_handler
                 ):
-                    # Check if this is a tool-use indicator via sentinel prefix
                     if chunk.startswith(TOOL_USE_SENTINEL):
                         tool_data = json.loads(chunk[len(TOOL_USE_SENTINEL):])
                         yield {"data": json.dumps(tool_data)}
@@ -250,13 +292,41 @@ async def chat(session_id: str, body: ChatRequest):
                     collected += chunk
                     yield {"data": json.dumps({"type": "chunk", "content": chunk})}
 
-                tracker.input_tokens = provider.last_input_tokens
-                tracker.output_tokens = provider.last_output_tokens
+                tracker.input_tokens = p.last_input_tokens
+                tracker.output_tokens = p.last_output_tokens
 
+        collected = ""
+        primary_error = None
+
+        try:
+            async for event in _run_chat(provider):
+                yield event
         except LLMError as e:
-            yield {"data": json.dumps({"type": "error", "message": str(e)})}
-            yield {"data": json.dumps({"type": "done"})}
-            return
+            primary_error = e
+
+        if primary_error is not None:
+            fallback = get_fallback_provider()
+            if fallback is None:
+                yield {"data": json.dumps({"type": "error", "message": str(primary_error)})}
+                yield {"data": json.dumps({"type": "done"})}
+                return
+
+            yield {"data": json.dumps({
+                "type": "warning",
+                "message": f"{provider.provider_name.title()} failed: {primary_error}. Falling back to {fallback.provider_name.title()}...",
+            })}
+
+            collected = ""
+            try:
+                async for event in _run_chat(fallback):
+                    yield event
+            except LLMError as e:
+                yield {"data": json.dumps({
+                    "type": "error",
+                    "message": f"Both providers failed. {provider.provider_name.title()}: {primary_error}. {fallback.provider_name.title()}: {e}",
+                })}
+                yield {"data": json.dumps({"type": "done"})}
+                return
 
         # Save assistant response to chat history
         if collected.strip():
@@ -277,6 +347,37 @@ def _strip_markdown_fences(text: str) -> str:
     if match:
         return match.group(1).strip()
     return stripped
+
+
+_VALID_SIGNAL_TYPES = {"pod_logs", "cluster_info", "resource_definitions", "events", "node_status", "other"}
+
+
+def _sanitize_signal_types(text: str) -> str:
+    """Replace unknown signal type strings with 'other' in the JSON response.
+
+    LLMs occasionally invent signal types like 'node_conditions' or 'pod_status'
+    that don't match the SignalType enum, causing the entire report to fail
+    validation. This normalizes them before parsing.
+    """
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, ValueError):
+        return text
+
+    for finding in data.get("findings", []):
+        if "source_signals" in finding:
+            finding["source_signals"] = [
+                s if s in _VALID_SIGNAL_TYPES else "other"
+                for s in finding["source_signals"]
+            ]
+
+    if "signal_types_analyzed" in data:
+        data["signal_types_analyzed"] = [
+            s if s in _VALID_SIGNAL_TYPES else "other"
+            for s in data["signal_types_analyzed"]
+        ]
+
+    return json.dumps(data)
 
 
 @router.delete("/sessions/{session_id}")

@@ -97,7 +97,7 @@ export function UploadPhase({ onUploadComplete }: UploadPhaseProps) {
         onDrop={handleDrop}
         className={`w-full max-w-lg rounded-xl border-2 border-dashed p-16 text-center transition-all duration-200 ${
           isDragging
-            ? 'border-blue-500 bg-blue-950/20'
+            ? 'border-teal-500 bg-teal-950/20'
             : 'border-zinc-700 hover:border-zinc-600'
         }`}
       >
@@ -120,7 +120,7 @@ export function UploadPhase({ onUploadComplete }: UploadPhaseProps) {
         />
         <label
           htmlFor="file-input"
-          className="inline-block cursor-pointer rounded-lg bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-500"
+          className="inline-block cursor-pointer rounded-lg bg-teal-600 px-5 py-2.5 text-sm font-medium text-white transition-all duration-200 hover:bg-teal-500 hover:shadow-lg hover:shadow-teal-500/10"
         >
           Select .tar.gz file
         </label>
@@ -128,7 +128,7 @@ export function UploadPhase({ onUploadComplete }: UploadPhaseProps) {
 
       {isUploading && (
         <div data-testid="upload-progress" className="flex w-full max-w-lg items-center justify-center gap-3">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-blue-500 border-t-transparent" />
+          <div className="h-5 w-5 animate-spin rounded-full border-2 border-teal-500 border-t-transparent" />
           <p className="text-sm text-zinc-400">Uploading and extracting bundle...</p>
         </div>
       )}

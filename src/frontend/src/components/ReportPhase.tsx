@@ -9,7 +9,8 @@ interface ReportPhaseProps {
   manifest: BundleManifest
   signalSummary: Record<string, number>
   onReportComplete: (report: DiagnosticReport) => void
-  onFileSelect?: (path: string) => void
+  onFileSelect?: (path: string, excerpt?: string) => void
+  onToast?: (type: 'warning' | 'error', message: string) => void
 }
 
 const SEVERITY_ORDER = { critical: 0, warning: 1, info: 2 } as const
@@ -22,6 +23,38 @@ interface Step {
   label: string
   detail: string
   status: StepStatus
+  subDetail?: string
+}
+
+/** Rotating status hints shown during the AI analysis phase */
+const ANALYSIS_HINTS = [
+  'Scanning pod logs for errors…',
+  'Correlating events with resource states…',
+  'Checking resource limits and requests…',
+  'Identifying crash loops and restarts…',
+  'Analyzing cluster topology…',
+  'Cross-referencing signal types…',
+  'Mapping failure timeline…',
+  'Evaluating remediation options…',
+]
+
+function useElapsedSeconds(running: boolean): number {
+  const [elapsed, setElapsed] = useState(0)
+  const startRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (running) {
+      startRef.current = Date.now()
+      const tick = () => {
+        if (startRef.current) setElapsed(Math.floor((Date.now() - startRef.current) / 1000))
+      }
+      const id = setInterval(tick, 1000)
+      return () => clearInterval(id)
+    }
+    startRef.current = null
+  }, [running])
+
+  return elapsed
 }
 
 function formatBytes(bytes: number): string {
@@ -51,8 +84,8 @@ function CheckIcon() {
 function ActiveDot() {
   return (
     <span className="flex h-5 w-5 items-center justify-center">
-      <span className="absolute h-3 w-3 animate-ping rounded-full bg-blue-400 opacity-40" />
-      <span className="relative h-2.5 w-2.5 rounded-full bg-blue-500" />
+      <span className="absolute h-3 w-3 animate-ping rounded-full bg-teal-400 opacity-40" />
+      <span className="relative h-2.5 w-2.5 rounded-full bg-teal-500" />
     </span>
   )
 }
@@ -78,36 +111,48 @@ function ProgressStepper({ steps }: { steps: Step[] }) {
       className="rounded-xl border border-zinc-800 bg-zinc-900 p-6"
     >
       <div className="space-y-0">
-        {steps.map((step, idx) => (
-          <div key={step.label} className="flex gap-3">
-            {/* Icon column with connecting line */}
-            <div className="flex flex-col items-center">
-              <div className="relative flex-shrink-0">
-                <StepIcon status={step.status} />
+        {steps.map((step, idx) => {
+          const hasSubDetail = step.status === 'active' && step.subDetail
+          return (
+            <div key={step.label} className="flex gap-3">
+              {/* Icon column with connecting line */}
+              <div className="flex flex-col items-center">
+                <div className="relative flex-shrink-0">
+                  <StepIcon status={step.status} />
+                </div>
+                {idx < steps.length - 1 && (
+                  <div className={`transition-colors duration-500 ${
+                    hasSubDetail ? 'h-14' : 'h-6'
+                  } border-l-2 ${
+                    step.status === 'done' ? 'border-teal-600' : 'border-zinc-800'
+                  }`} />
+                )}
               </div>
-              {idx < steps.length - 1 && (
-                <div className="h-6 border-l-2 border-zinc-800" />
-              )}
+              {/* Text column */}
+              <div className="pb-6">
+                <span
+                  className={`text-sm font-medium ${
+                    step.status === 'active'
+                      ? 'text-zinc-200'
+                      : step.status === 'done'
+                        ? 'text-zinc-300'
+                        : 'text-zinc-500'
+                  }`}
+                >
+                  {step.label}
+                </span>
+                {step.detail && (
+                  <span className="ml-2 text-sm text-zinc-500">&mdash; {step.detail}</span>
+                )}
+                {hasSubDetail && (
+                  <div className="mt-1.5 text-xs text-zinc-500 animate-fade-in-up">
+                    {step.subDetail}
+                  </div>
+                )}
+              </div>
             </div>
-            {/* Text column */}
-            <div className="pb-6">
-              <span
-                className={`text-sm font-medium ${
-                  step.status === 'active'
-                    ? 'text-zinc-200'
-                    : step.status === 'done'
-                      ? 'text-zinc-300'
-                      : 'text-zinc-500'
-                }`}
-              >
-                {step.label}
-              </span>
-              {step.detail && (
-                <span className="ml-2 text-sm text-zinc-500">&mdash; {step.detail}</span>
-              )}
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </div>
   )
@@ -146,11 +191,16 @@ export function ReportPhase({
   signalSummary,
   onReportComplete,
   onFileSelect,
+  onToast,
 }: ReportPhaseProps) {
   const [report, setReport] = useState<DiagnosticReport | null>(null)
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all')
   const [analysisComplete, setAnalysisComplete] = useState(false)
+  const [chunkCount, setChunkCount] = useState(0)
+  const [charCount, setCharCount] = useState(0)
   const startedRef = useRef(false)
+  const hintIndexRef = useRef(0)
+  const [hintIndex, setHintIndex] = useState(0)
 
   const handleEvent = useCallback(
     (event: SSEEvent) => {
@@ -162,14 +212,30 @@ export function ReportPhase({
     [onReportComplete],
   )
 
-  const handleChunk = useCallback(() => {
-    // Chunks are consumed silently — the stepper replaces raw text display
+  const handleChunk = useCallback((content: string) => {
+    setChunkCount((c) => c + 1)
+    setCharCount((c) => c + content.length)
   }, [])
 
-  const { isStreaming, error, startStream, stopStream } = useSSE({
+  const { isStreaming, error, startStream } = useSSE({
     onChunk: handleChunk,
     onEvent: handleEvent,
+    onWarning: useCallback((msg: string) => onToast?.('warning', msg), [onToast]),
+    onError: useCallback((msg: string) => onToast?.('error', msg), [onToast]),
   })
+
+  const isAnalyzing = isStreaming && chunkCount > 0
+  const elapsed = useElapsedSeconds(isAnalyzing)
+
+  // Rotate hints every 3 seconds during analysis
+  useEffect(() => {
+    if (!isAnalyzing) return
+    const id = setInterval(() => {
+      hintIndexRef.current = (hintIndexRef.current + 1) % ANALYSIS_HINTS.length
+      setHintIndex(hintIndexRef.current)
+    }, 3000)
+    return () => clearInterval(id)
+  }, [isAnalyzing])
 
   useEffect(() => {
     if (!isStreaming && startedRef.current && !report) {
@@ -178,14 +244,22 @@ export function ReportPhase({
   }, [isStreaming, report])
 
   useEffect(() => {
-    // Guard against StrictMode double-mount
+    // Start analysis stream. The ref guard prevents double-starting
+    // but we intentionally do NOT abort on cleanup — StrictMode's
+    // mount/unmount/remount cycle would kill the long-running SSE
+    // stream and the guard would prevent restarting it.
     if (startedRef.current) return
     startedRef.current = true
     startStream(`/api/analyze/${sessionId}`)
-    return () => {
-      stopStream()
-    }
-  }, [sessionId, startStream, stopStream])
+  }, [sessionId, startStream])
+
+  // Build analysis step detail & sub-detail
+  const analysisDetail = isAnalyzing
+    ? `${elapsed}s elapsed`
+    : ''
+  const analysisSubDetail = isAnalyzing
+    ? ANALYSIS_HINTS[hintIndex]
+    : undefined
 
   // Build stepper steps
   const steps: Step[] = [
@@ -200,14 +274,17 @@ export function ReportPhase({
       status: 'done',
     },
     {
-      label: report || analysisComplete ? 'Analysis complete' : 'Analyzing with AI...',
-      detail: '',
+      label: report || analysisComplete ? 'Analysis complete' : isAnalyzing ? 'Analyzing bundle' : 'Connecting to AI…',
+      detail: report || analysisComplete
+        ? `${charCount.toLocaleString()} chars processed`
+        : analysisDetail,
       status: report || analysisComplete ? 'done' : isStreaming ? 'active' : 'pending',
+      subDetail: analysisSubDetail,
     },
     {
       label: 'Building report',
-      detail: '',
-      status: report ? 'done' : 'pending',
+      detail: report ? `${report.findings.length} findings` : '',
+      status: report ? 'done' : analysisComplete ? 'active' : 'pending',
     },
   ]
 
@@ -224,15 +301,21 @@ export function ReportPhase({
   )
 
   const severityBorderColor = {
-    critical: 'border-red-500 bg-red-950/40',
-    warning: 'border-amber-500 bg-amber-950/30',
-    info: 'border-zinc-600 bg-zinc-800/50',
+    critical: 'border-l-[3px] border-red-500 bg-red-500/[0.04] shadow-[inset_0_0_20px_rgba(239,68,68,0.04)]',
+    warning: 'border-l-[3px] border-amber-500 bg-amber-500/[0.03] shadow-[inset_0_0_20px_rgba(245,158,11,0.03)]',
+    info: 'border-l-[3px] border-zinc-600 bg-zinc-500/[0.06]',
   } as const
 
   const severityBadgeColor = {
-    critical: 'text-red-400',
-    warning: 'text-amber-400',
-    info: 'text-zinc-400',
+    critical: 'bg-red-500/10 text-red-400',
+    warning: 'bg-amber-500/10 text-amber-400',
+    info: 'bg-zinc-500/10 text-zinc-400',
+  } as const
+
+  const severityDotColor = {
+    critical: 'bg-red-500',
+    warning: 'bg-amber-500',
+    info: 'bg-zinc-500',
   } as const
 
   return (
@@ -254,7 +337,7 @@ export function ReportPhase({
           <button
             data-testid="download-report"
             onClick={() => downloadMarkdown(report)}
-            className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+            className="rounded-lg border border-zinc-700 px-3 py-1.5 text-sm text-zinc-400 transition-all duration-200 hover:bg-zinc-800 hover:text-zinc-200 hover:shadow-lg hover:shadow-teal-500/10"
           >
             Download Report
           </button>
@@ -282,7 +365,7 @@ export function ReportPhase({
       {report && (
         <div data-testid="report-content" className="space-y-6">
           {/* Executive Summary */}
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-5">
+          <div className="animate-fade-in-up rounded-xl border border-zinc-800 bg-zinc-900 p-5">
             <h3 className="mb-2 text-xs font-medium uppercase tracking-wider text-zinc-500">
               Executive Summary
             </h3>
@@ -291,7 +374,9 @@ export function ReportPhase({
 
           {/* Event Timeline */}
           {report.timeline && report.timeline.length > 0 && (
-            <Timeline events={report.timeline} />
+            <div className="animate-fade-in-up" style={{ animationDelay: '100ms' }}>
+              <Timeline events={report.timeline} />
+            </div>
           )}
 
           {/* Truncation Note */}
@@ -302,7 +387,7 @@ export function ReportPhase({
           )}
 
           {/* Findings */}
-          <div className="space-y-4">
+          <div className="animate-fade-in-up space-y-4" style={{ animationDelay: '200ms' }}>
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium text-zinc-500">
                 Findings ({sortedFindings.length}
@@ -340,12 +425,14 @@ export function ReportPhase({
             {sortedFindings.map((finding, idx) => (
               <div
                 key={`${finding.severity}-${finding.title}-${idx}`}
-                className={`rounded-lg border-l-4 p-4 ${severityBorderColor[finding.severity]}`}
+                className={`animate-fade-in-up rounded-lg p-4 transition-all duration-200 hover:translate-x-0.5 ${severityBorderColor[finding.severity]}`}
+                style={{ animationDelay: `${idx * 80}ms` }}
               >
                 <div className="mb-2 flex items-center gap-2">
                   <span
-                    className={`text-xs font-semibold uppercase ${severityBadgeColor[finding.severity]}`}
+                    className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-semibold uppercase tracking-wide ${severityBadgeColor[finding.severity]}`}
                   >
+                    <span className={`h-1.5 w-1.5 rounded-full ${severityDotColor[finding.severity]}`} />
                     {finding.severity}
                   </span>
                   <h4 className="font-medium text-zinc-100">{finding.title}</h4>
@@ -376,8 +463,8 @@ export function ReportPhase({
                           >
                             {onFileSelect ? (
                               <button
-                                onClick={() => onFileSelect(src.file_path)}
-                                className="font-mono text-blue-400 hover:text-blue-300 hover:underline"
+                                onClick={() => onFileSelect(src.file_path, src.excerpt)}
+                                className="font-mono text-teal-400 hover:text-teal-300 hover:underline"
                               >
                                 {src.file_path}
                               </button>

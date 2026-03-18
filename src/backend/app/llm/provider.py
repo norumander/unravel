@@ -98,3 +98,25 @@ def get_provider() -> LLMProvider:
     raise ValueError(
         f"Unknown LLM_PROVIDER: '{provider}'. Must be 'anthropic' or 'openai'."
     )
+
+
+def get_fallback_provider() -> LLMProvider | None:
+    """Try to create the alternative LLM provider for fallback.
+
+    If primary is anthropic, tries openai and vice versa.
+    Returns None if the fallback provider's API key is not configured.
+    """
+    primary = os.environ.get("LLM_PROVIDER", "").lower()
+
+    if primary == "anthropic":
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if api_key:
+            from app.llm.openai_provider import OpenAIProvider
+            return OpenAIProvider(api_key=api_key)
+    elif primary == "openai":
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if api_key:
+            from app.llm.anthropic_provider import AnthropicProvider
+            return AnthropicProvider(api_key=api_key)
+
+    return None

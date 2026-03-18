@@ -37,7 +37,7 @@ class AnthropicProvider(LLMProvider):
     def __init__(self, api_key: str) -> None:
         super().__init__()
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
-        self._model = os.environ.get("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+        self._model = os.environ.get("ANTHROPIC_MODEL") or "claude-sonnet-4-20250514"
 
     @property
     def provider_name(self) -> str:
@@ -65,12 +65,7 @@ class AnthropicProvider(LLMProvider):
                 self._last_input_tokens = response.usage.input_tokens
                 self._last_output_tokens = response.usage.output_tokens
 
-        except (
-            anthropic.AuthenticationError,
-            anthropic.RateLimitError,
-            anthropic.APIConnectionError,
-            anthropic.APIStatusError,
-        ) as e:
+        except Exception as e:
             raise _map_anthropic_error(e) from e
 
     async def chat(
@@ -179,12 +174,7 @@ class AnthropicProvider(LLMProvider):
                 yield "\n[Tool call limit reached — stopping after "
                 yield f"{MAX_TOOL_ROUNDS} rounds]\n"
 
-        except (
-            anthropic.AuthenticationError,
-            anthropic.RateLimitError,
-            anthropic.APIConnectionError,
-            anthropic.APIStatusError,
-        ) as e:
+        except Exception as e:
             raise _map_anthropic_error(e) from e
 
 

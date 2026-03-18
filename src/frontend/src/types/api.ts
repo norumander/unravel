@@ -53,6 +53,7 @@ export type SSEEvent =
   | { type: 'tool_use'; name: string; file_path: string }
   | { type: 'done' }
   | { type: 'error'; message: string }
+  | { type: 'warning'; message: string }
 
 export interface ChatMessage {
   role: 'user' | 'assistant'

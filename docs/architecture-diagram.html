@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Unravel — System Architecture</title>
+<style>
+  :root {
+    --bg: #0a0a0b;
+    --surface: #18181b;
+    --surface-2: #1e1e22;
+    --border: #27272a;
+    --teal: #2dd4bf;
+    --teal-dim: #2dd4bf66;
+    --teal-glow: #2dd4bf18;
+    --blue: #60a5fa;
+    --purple: #a78bfa;
+    --zinc-100: #f4f4f5;
+    --zinc-300: #d4d4d8;
+    --zinc-400: #a1a1aa;
+    --zinc-500: #71717a;
+    --zinc-600: #52525b;
+    --zinc-700: #3f3f46;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--zinc-300);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    min-height: 100vh;
+    padding: 48px 32px;
+  }
+
+  h1 {
+    text-align: center;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--zinc-100);
+    letter-spacing: -0.5px;
+    margin-bottom: 4px;
+  }
+
+  .subtitle {
+    text-align: center;
+    font-size: 14px;
+    color: var(--zinc-500);
+    margin-bottom: 48px;
+  }
+
+  .diagram {
+    max-width: 1100px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  /* Swim lane containers */
+  .lane {
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 24px;
+    position: relative;
+    background: var(--surface);
+  }
+
+  .lane-label {
+    position: absolute;
+    top: -10px;
+    left: 20px;
+    background: var(--surface);
+    padding: 0 10px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.2px;
+    color: var(--zinc-500);
+  }
+
+  .lane-label .icon { margin-right: 4px; }
+
+  /* Node styling */
+  .nodes {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .node {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    min-width: 140px;
+    text-align: center;
+    transition: all 0.2s;
+    cursor: pointer;
+    position: relative;
+  }
+
+  .node:hover {
+    border-color: var(--zinc-600);
+    transform: translateY(-1px);
+  }
+
+  .node.expanded {
+    border-color: var(--teal-dim);
+    box-shadow: 0 0 24px var(--teal-glow);
+  }
+
+  .node-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--zinc-100);
+    margin-bottom: 4px;
+  }
+
+  .node-detail {
+    font-size: 11px;
+    color: var(--zinc-500);
+    line-height: 1.4;
+  }
+
+  .node-file {
+    font-size: 10px;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+    color: var(--zinc-600);
+    margin-top: 6px;
+  }
+
+  /* Detail panel — expands below the node row */
+  .detail-panel {
+    overflow: hidden;
+    max-height: 0;
+    opacity: 0;
+    transition: max-height 0.3s ease, opacity 0.25s ease, margin 0.3s ease;
+    margin-top: 0;
+  }
+
+  .detail-panel.open {
+    max-height: 400px;
+    opacity: 1;
+    margin-top: 12px;
+  }
+
+  .detail-inner {
+    background: var(--surface-2);
+    border: 1px solid var(--teal-dim);
+    border-radius: 12px;
+    padding: 20px 24px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  .detail-inner h3 {
+    grid-column: 1 / -1;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--zinc-100);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: -4px;
+  }
+
+  .detail-inner h3 .file-tag {
+    font-size: 11px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-weight: 400;
+    color: var(--teal);
+    background: #2dd4bf10;
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  .detail-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .detail-field.full {
+    grid-column: 1 / -1;
+  }
+
+  .detail-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--zinc-500);
+  }
+
+  .detail-value {
+    font-size: 13px;
+    color: var(--zinc-300);
+    line-height: 1.5;
+  }
+
+  .detail-value code {
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 12px;
+    background: var(--surface);
+    padding: 1px 6px;
+    border-radius: 3px;
+    color: var(--zinc-400);
+  }
+
+  .detail-deps {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .detail-dep {
+    font-size: 11px;
+    padding: 2px 10px;
+    border-radius: 5px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--zinc-400);
+  }
+
+  /* Flow arrows section */
+  .flow-section {
+    max-width: 1100px;
+    margin: 0 auto;
+    width: 100%;
+  }
+
+  .flow-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--zinc-400);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 16px;
+    padding-left: 4px;
+  }
+
+  .flow-steps {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    position: relative;
+  }
+
+  .flow-step {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    position: relative;
+    padding: 0 8px;
+  }
+
+  .flow-num {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--teal);
+    color: var(--bg);
+    font-size: 13px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 10px;
+    position: relative;
+    z-index: 2;
+  }
+
+  .flow-step:not(:last-child)::after {
+    content: '';
+    position: absolute;
+    top: 14px;
+    left: calc(50% + 18px);
+    right: calc(-50% + 18px);
+    height: 2px;
+    background: linear-gradient(90deg, var(--teal), var(--teal-dim));
+    z-index: 1;
+  }
+
+  .flow-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--zinc-100);
+    margin-bottom: 4px;
+    text-align: center;
+  }
+
+  .flow-desc {
+    font-size: 11px;
+    color: var(--zinc-500);
+    text-align: center;
+    line-height: 1.4;
+  }
+
+  .flow-proto {
+    margin-top: 6px;
+    font-size: 10px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+
+  .proto-rest { color: var(--blue); border-color: #60a5fa33; }
+  .proto-sse { color: var(--teal); border-color: #2dd4bf33; }
+  .proto-stream { color: var(--purple); border-color: #a78bfa33; }
+
+  /* Data models strip */
+  .models-strip {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .model-chip {
+    font-size: 11px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    padding: 4px 12px;
+    border-radius: 6px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--zinc-400);
+    transition: all 0.15s;
+  }
+
+  .model-chip:hover {
+    border-color: var(--zinc-600);
+    color: var(--zinc-300);
+  }
+
+  /* Constraints bar */
+  .constraints {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 8px;
+  }
+
+  .constraint {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--zinc-400);
+    padding: 8px 12px;
+    border-radius: 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+  }
+
+  .constraint-id {
+    font-size: 10px;
+    font-weight: 700;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: var(--teal);
+    white-space: nowrap;
+  }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    body { padding: 24px 16px; }
+    .flow-steps { flex-direction: column; gap: 16px; }
+    .flow-step:not(:last-child)::after { display: none; }
+    .nodes { flex-direction: column; }
+    .node { min-width: unset; }
+    .detail-inner { grid-template-columns: 1fr; }
+  }
+
+  /* Section spacer */
+  .section-gap { height: 32px; }
+
+  /* Tech badges */
+  .tech-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 8px;
+  }
+
+  .tech-badge {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--zinc-500);
+    border: 1px solid var(--border);
+  }
+
+  /* Hint text */
+  .click-hint {
+    text-align: center;
+    font-size: 11px;
+    color: var(--zinc-600);
+    margin-top: 6px;
+    font-style: italic;
+  }
+</style>
+</head>
+<body>
+
+<h1>Unravel</h1>
+<p class="subtitle">Kubernetes Support Bundle Diagnostics — System Architecture</p>
+
+<div class="diagram">
+
+  <!-- Request Flow -->
+  <div class="flow-section">
+    <div class="flow-title">Request Flow</div>
+    <div class="flow-steps">
+      <div class="flow-step">
+        <div class="flow-num">1</div>
+        <div class="flow-label">Upload</div>
+        <div class="flow-desc">User drops .tar.gz bundle</div>
+        <div class="flow-proto proto-rest">POST /api/upload</div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">2</div>
+        <div class="flow-label">Parse & Classify</div>
+        <div class="flow-desc">Extract files, classify into 6 signal types</div>
+        <div class="flow-proto proto-rest">&rarr; BundleManifest</div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">3</div>
+        <div class="flow-label">Analyze</div>
+        <div class="flow-desc">Stream bundle context to LLM, receive structured JSON</div>
+        <div class="flow-proto proto-sse">SSE /api/analyze/:id</div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">4</div>
+        <div class="flow-label">Report</div>
+        <div class="flow-desc">Findings, timeline, remediations</div>
+        <div class="flow-proto proto-sse">&rarr; DiagnosticReport</div>
+      </div>
+      <div class="flow-step">
+        <div class="flow-num">5</div>
+        <div class="flow-label">Chat</div>
+        <div class="flow-desc">Follow-up investigation with file retrieval tools</div>
+        <div class="flow-proto proto-stream">SSE /api/chat/:id</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-gap"></div>
+
+  <!-- Frontend Lane -->
+  <div class="lane" id="lane-frontend">
+    <div class="lane-label"><span class="icon">&square;</span> Frontend &mdash; port 3000</div>
+    <div class="nodes">
+      <div class="node" data-detail="uploadphase" onclick="toggleDetail(this)">
+        <div class="node-name">UploadPhase</div>
+        <div class="node-detail">Drag-and-drop .tar.gz<br>File validation</div>
+        <div class="node-file">components/UploadPhase.tsx</div>
+      </div>
+      <div class="node" data-detail="reportphase" onclick="toggleDetail(this)">
+        <div class="node-name">ReportPhase</div>
+        <div class="node-detail">Progress stepper<br>Findings + timeline</div>
+        <div class="node-file">components/ReportPhase.tsx</div>
+      </div>
+      <div class="node" data-detail="chatphase" onclick="toggleDetail(this)">
+        <div class="node-name">ChatPhase</div>
+        <div class="node-detail">Streaming messages<br>Tool-use indicators</div>
+        <div class="node-file">components/ChatPhase.tsx</div>
+      </div>
+      <div class="node" data-detail="fileviewer" onclick="toggleDetail(this)">
+        <div class="node-name">FileViewer</div>
+        <div class="node-detail">Source file inspector<br>Excerpt highlighting</div>
+        <div class="node-file">components/FileViewer.tsx</div>
+      </div>
+      <div class="node" data-detail="usesse" onclick="toggleDetail(this)">
+        <div class="node-name">useSSE</div>
+        <div class="node-detail">SSE stream hook<br>Chunk / event dispatch</div>
+        <div class="node-file">hooks/useSSE.ts</div>
+      </div>
+    </div>
+    <p class="click-hint">Click a component to expand details</p>
+    <div class="detail-panel" id="panel-uploadphase">
+      <div class="detail-inner">
+        <h3>UploadPhase <span class="file-tag">components/UploadPhase.tsx</span></h3>
+        <div class="detail-field full">
+          <div class="detail-label">Responsibility</div>
+          <div class="detail-value">Drag-and-drop or click-to-browse file upload for <code>.tar.gz</code> support bundles. Validates file type and size client-side before sending to the backend.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Interface</div>
+          <div class="detail-value">Accepts <code>onUploadComplete(sessionId, manifest, signals)</code> callback. Sends <code>POST /api/upload</code> as multipart/form-data.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Key behaviors</div>
+          <div class="detail-value">Animated drop zone with visual feedback. Progress indication during upload. Error toast on invalid file type or server rejection.</div>
+        </div>
+        <div class="detail-field full">
+          <div class="detail-label">Depends on</div>
+          <div class="detail-deps">
+            <span class="detail-dep">API Layer</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="detail-panel" id="panel-reportphase">
+      <div class="detail-inner">
+        <h3>ReportPhase <span class="file-tag">components/ReportPhase.tsx</span></h3>
+        <div class="detail-field full">
+          <div class="detail-label">Responsibility</div>
+          <div class="detail-value">Displays a live progress stepper during LLM analysis, then renders the structured diagnostic report: executive summary, severity-sorted findings with root causes and remediations, event timeline, and source citations.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Interface</div>
+          <div class="detail-value">Consumes SSE stream from <code>GET /api/analyze/:id</code>. Fires <code>onReportComplete(report)</code> when the DiagnosticReport is received.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Key behaviors</div>
+          <div class="detail-value">Real-time progress hints during analysis. Severity filter (all / critical+warning / critical). Copy-to-clipboard on remediations. Clickable source citations open FileViewer. Markdown export.</div>
+        </div>
+        <div class="detail-field full">
+          <div class="detail-label">Depends on</div>
+          <div class="detail-deps">
+            <span class="detail-dep">useSSE</span>
+            <span class="detail-dep">Timeline</span>
+            <span class="detail-dep">FileViewer</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="detail-panel" id="panel-chatphase">
+      <div class="detail-inner">
+        <h3>ChatPhase <span class="file-tag">components/ChatPhase.tsx</span></h3>
+        <div class="detail-field full">
+          <div class="detail-label">Responsibility</div>
+          <div class="detail-value">Interactive follow-up chat for investigating findings. Sends user questions and renders streaming LLM responses with tool-use indicators when the AI inspects bundle files.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Interface</div>
+          <div class="detail-value">Sends <code>POST /api/chat/:id</code> with message history. Consumes SSE response stream. Tool-use events trigger FileViewer panel.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Key behaviors</div>
+          <div class="detail-value">Streaming message display with typing animation. Tool-use badges showing which files the AI is reading. Chat history maintained in component state (max 40 messages). Session-scoped &mdash; resets on new upload.</div>
+        </div>
+        <div class="detail-field full">
+          <div class="detail-label">Depends on</div>
+          <div class="detail-deps">
+            <span class="detail-dep">useSSE</span>
+            <span class="detail-dep">FileViewer</span>
+            <span class="detail-dep">Session Store (via API)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="detail-panel" id="panel-fileviewer">
+      <div class="detail-inner">
+        <h3>FileViewer <span class="file-tag">components/FileViewer.tsx</span></h3>
+        <div class="detail-field full">
+          <div class="detail-label">Responsibility</div>
+          <div class="detail-value">Side panel that displays raw contents of bundle files. Opened when users click source citations in findings or when the chat AI uses the <code>get_file_contents</code> tool.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Interface</div>
+          <div class="detail-value">Accepts <code>filePath</code> and optional <code>excerpt</code>. Fetches file content from <code>GET /api/file/:sessionId/:path</code>. Highlights matching excerpt if provided.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Key behaviors</div>
+          <div class="detail-value">Slide-in panel. Syntax-highlighted content. Excerpt auto-scroll and highlight. Copy full file contents. Close on escape or click outside.</div>
+        </div>
+        <div class="detail-field full">
+          <div class="detail-label">Depends on</div>
+          <div class="detail-deps">
+            <span class="detail-dep">API Layer</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="detail-panel" id="panel-usesse">
+      <div class="detail-inner">
+        <h3>useSSE <span class="file-tag">hooks/useSSE.ts</span></h3>
+        <div class="detail-field full">
+          <div class="detail-label">Responsibility</div>
+          <div class="detail-value">Custom React hook that manages Server-Sent Event connections. Parses the SSE protocol, dispatches typed events (chunk, report, error, warning, done) to callbacks, and handles connection lifecycle.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Interface</div>
+          <div class="detail-value">Returns <code>{ isStreaming, error, startStream, stopStream }</code>. Accepts <code>onChunk</code>, <code>onEvent</code>, <code>onError</code>, <code>onWarning</code>, <code>onDone</code> callbacks.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Key behaviors</div>
+          <div class="detail-value">Uses <code>fetch</code> with <code>ReadableStream</code> reader (not native EventSource) for better control. Callbacks stored in refs to avoid stale closures. AbortController for cancellation. Automatic cleanup on unmount.</div>
+        </div>
+        <div class="detail-field full">
+          <div class="detail-label">Depends on</div>
+          <div class="detail-deps">
+            <span class="detail-dep">Browser Fetch API</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="tech-row">
+      <span class="tech-badge">React 18</span>
+      <span class="tech-badge">TypeScript</span>
+      <span class="tech-badge">Vite</span>
+      <span class="tech-badge">Tailwind CSS</span>
+      <span class="tech-badge">nginx</span>
+    </div>
+  </div>
+
+  <!-- Backend Lane -->
+  <div class="lane" id="lane-backend">
+    <div class="lane-label"><span class="icon">&hexaf;</span> Backend &mdash; port 8000</div>
+    <div class="nodes">
+      <div class="node" data-detail="apilayer" onclick="toggleDetail(this)">
+        <div class="node-name">API Layer</div>
+        <div class="node-detail">REST + SSE routes<br>Upload, Analyze, Chat, Delete</div>
+        <div class="node-file">api/routes.py</div>
+      </div>
+      <div class="node" data-detail="bundleparser" onclick="toggleDetail(this)">
+        <div class="node-name">Bundle Parser</div>
+        <div class="node-detail">tar.gz extraction<br>500 MB limit, path traversal guard</div>
+        <div class="node-file">bundle/parser.py</div>
+      </div>
+      <div class="node" data-detail="signalclassifier" onclick="toggleDetail(this)">
+        <div class="node-name">Signal Classifier</div>
+        <div class="node-detail">Path-pattern rules<br>6 signal types</div>
+        <div class="node-file">bundle/classifier.py</div>
+      </div>
+      <div class="node" data-detail="contextassembler" onclick="toggleDetail(this)">
+        <div class="node-name">Context Assembler</div>
+        <div class="node-detail">Priority truncation<br>100K token budget</div>
+        <div class="node-file">analysis/context.py</div>
+      </div>
+      <div class="node" data-detail="llmprovider" onclick="toggleDetail(this)">
+        <div class="node-name">LLM Provider</div>
+        <div class="node-detail">Abstract interface<br>Analyze + Chat streaming</div>
+        <div class="node-file">llm/provider.py</div>
+      </div>
+      <div class="node" data-detail="sessionstore" onclick="toggleDetail(this)">
+        <div class="node-name">Session Store</div>
+        <div class="node-detail">In-memory dict<br>No persistence</div>
+        <div class="node-file">sessions/store.py</div>
+      </div>
+      <div class="node" data-detail="llmlogger" onclick="toggleDetail(this)">
+        <div class="node-name">LLM Logger</div>
+        <div class="node-detail">JSON to stdout<br>Tokens, latency, status</div>
+        <div class="node-file">logging/llm_logger.py</div>
+      </div>
+    </div>
+    <p class="click-hint">Click a component to expand details</p>
+    <div class="detail-panel" id="panel-apilayer">
+      <div class="detail-inner">
+        <h3>API Layer <span class="file-tag">api/routes.py</span></h3>
+        <div class="detail-field full">
+          <div class="detail-label">Responsibility</div>
+          <div class="detail-value">FastAPI router defining all HTTP endpoints. Handles file upload via multipart, triggers analysis and chat as SSE streams, and manages session lifecycle (create on upload, delete on request).</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Endpoints</div>
+          <div class="detail-value">
+            <code>POST /api/upload</code> &rarr; parse, classify, create session<br>
+            <code>GET /api/analyze/:id</code> &rarr; SSE stream (chunk, report, error, done)<br>
+            <code>POST /api/chat/:id</code> &rarr; SSE stream with tool-use<br>
+            <code>DELETE /api/sessions/:id</code> &rarr; cleanup<br>
+            <code>GET /api/health</code> &rarr; liveness check
+          </div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Key behaviors</div>
+          <div class="detail-value">LLM provider auto-fallback on failure. Markdown fence stripping on LLM output. Signal type sanitization for schema compliance. Concurrency guard prevents duplicate analysis.</div>
+        </div>
+        <div class="detail-field full">
+          <div class="detail-label">Depends on</div>
+          <div class="detail-deps">
+            <span class="detail-dep">Bundle Parser</span>
+            <span class="detail-dep">Signal Classifier</span>
+            <span class="detail-dep">Context Assembler</span>
+            <span class="detail-dep">LLM Provider</span>
+            <span class="detail-dep">Session Store</span>
+            <span class="detail-dep">LLM Logger</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="detail-panel" id="panel-bundleparser">
+      <div class="detail-inner">
+        <h3>Bundle Parser <span class="file-tag">bundle/parser.py</span></h3>
+        <div class="detail-field full">
+          <div class="detail-label">Responsibility</div>
+          <div class="detail-value">Accept uploaded <code>.tar.gz</code> files, validate format (magic bytes check) and size (500 MB limit), extract all files in memory, and produce a BundleManifest listing every file with its path and size.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Interface</div>
+          <div class="detail-value"><code>parse_bundle(file: UploadFile) &rarr; tuple[BundleManifest, dict[str, bytes]]</code></div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Security</div>
+          <div class="detail-value">Validates tar.gz magic bytes before extraction. Prevents path traversal attacks (rejects entries with <code>..</code> or absolute paths). All content held in memory &mdash; nothing written to disk (GR-6).</div>
+        </div>
+        <div class="detail-field full">
+          <div class="detail-label">Depends on</div>
+          <div class="detail-deps">
+            <span class="detail-dep">Python tarfile</span>
+            <span class="detail-dep">Python io</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="detail-panel" id="panel-signalclassifier">
+      <div class="detail-inner">
+        <h3>Signal Classifier <span class="file-tag">bundle/classifier.py</span></h3>
+        <div class="detail-field full">
+          <div class="detail-label">Responsibility</div>
+          <div class="detail-value">Classify each file in the bundle manifest into one of six signal types based on path patterns matching Troubleshoot directory conventions.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Signal types</div>
+          <div class="detail-value"><code>pod_logs</code>, <code>cluster_info</code>, <code>resource_definitions</code>, <code>events</code>, <code>node_status</code>, <code>other</code></div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Design</div>
+          <div class="detail-value">Pure function, no side effects. Pattern-based regex matching on file paths only &mdash; no content inspection. Unknown paths fall through to <code>other</code>. Supports arbitrary bundle structures (GR-12).</div>
+        </div>
+        <div class="detail-field full">
+          <div class="detail-label">Depends on</div>
+          <div class="detail-deps">
+            <span class="detail-dep">None (pure logic)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="detail-panel" id="panel-contextassembler">
+      <div class="detail-inner">
+        <h3>Context Assembler <span class="file-tag">analysis/context.py</span></h3>
+        <div class="detail-field full">
+          <div class="detail-label">Responsibility</div>
+          <div class="detail-value">Assemble classified bundle content into an LLM-ready prompt. Applies priority-based truncation to fit within a 100K token budget (~400K characters).</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Truncation priority</div>
+          <div class="detail-value">Events &gt; Pod Logs &gt; Cluster Info &gt; Resource Definitions &gt; Node Status. Within each type, most recent content is preserved. Truncated sections are annotated in the output.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Interface</div>
+          <div class="detail-value"><code>assemble_context(classified, files, token_budget) &rarr; AnalysisContext</code></div>
+        </div>
+        <div class="detail-field full">
+          <div class="detail-label">Depends on</div>
+          <div class="detail-deps">
+            <span class="detail-dep">Signal Classifier output</span>
+            <span class="detail-dep">Extracted file contents</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="detail-panel" id="panel-llmprovider">
+      <div class="detail-inner">
+        <h3>LLM Provider <span class="file-tag">llm/provider.py</span></h3>
+        <div class="detail-field full">
+          <div class="detail-label">Responsibility</div>
+          <div class="detail-value">Abstract interface for LLM API calls with two implementations: Anthropic Claude (primary) and OpenAI GPT (fallback). Both support streaming responses and tool-use for chat.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Interface</div>
+          <div class="detail-value">
+            <code>analyze(context) &rarr; AsyncIterator[str]</code> &mdash; streaming analysis<br>
+            <code>chat(messages, tools, tool_handler) &rarr; AsyncIterator[str]</code> &mdash; streaming chat with tool calls
+          </div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Fallback strategy</div>
+          <div class="detail-value">Factory reads <code>LLM_PROVIDER</code> env var. If primary fails (auth, rate limit, connection), API layer automatically retries with the other provider. Both providers track input/output tokens for logging.</div>
+        </div>
+        <div class="detail-field full">
+          <div class="detail-label">Depends on</div>
+          <div class="detail-deps">
+            <span class="detail-dep">anthropic SDK</span>
+            <span class="detail-dep">openai SDK</span>
+            <span class="detail-dep">Prompt templates</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="detail-panel" id="panel-sessionstore">
+      <div class="detail-inner">
+        <h3>Session Store <span class="file-tag">sessions/store.py</span></h3>
+        <div class="detail-field full">
+          <div class="detail-label">Responsibility</div>
+          <div class="detail-value">In-memory storage of session objects. Each session holds the bundle manifest, extracted files, classified signals, diagnostic report, and chat history. No persistence &mdash; server restart clears everything.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Interface</div>
+          <div class="detail-value">
+            <code>create(manifest, files, classified) &rarr; Session</code><br>
+            <code>get(session_id) &rarr; Session</code><br>
+            <code>delete(session_id)</code>
+          </div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">GR-6 compliance</div>
+          <div class="detail-value">All data in-memory only. Delete clears all references. No disk writes, no external storage. Bundle content never leaves the process boundary except to LLM APIs.</div>
+        </div>
+        <div class="detail-field full">
+          <div class="detail-label">Depends on</div>
+          <div class="detail-deps">
+            <span class="detail-dep">None (Python dict)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="detail-panel" id="panel-llmlogger">
+      <div class="detail-inner">
+        <h3>LLM Logger <span class="file-tag">logging/llm_logger.py</span></h3>
+        <div class="detail-field full">
+          <div class="detail-label">Responsibility</div>
+          <div class="detail-value">Emit structured JSON log entries to stdout for every LLM API call. Provides observability into model usage, costs, and performance without exposing sensitive bundle content.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Log fields</div>
+          <div class="detail-value"><code>timestamp</code>, <code>session_id</code>, <code>call_type</code>, <code>provider</code>, <code>model</code>, <code>input_tokens</code>, <code>output_tokens</code>, <code>latency_ms</code>, <code>status</code></div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">GR-6 compliance</div>
+          <div class="detail-value">No bundle content, user queries, or LLM responses are included in log entries. Only metadata for operational monitoring.</div>
+        </div>
+        <div class="detail-field full">
+          <div class="detail-label">Depends on</div>
+          <div class="detail-deps">
+            <span class="detail-dep">Python json</span>
+            <span class="detail-dep">Context manager protocol</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="tech-row">
+      <span class="tech-badge">Python 3.12</span>
+      <span class="tech-badge">FastAPI</span>
+      <span class="tech-badge">SSE-Starlette</span>
+      <span class="tech-badge">Pydantic</span>
+      <span class="tech-badge">Uvicorn</span>
+    </div>
+  </div>
+
+  <!-- LLM Lane -->
+  <div class="lane" id="lane-llm">
+    <div class="lane-label"><span class="icon">&starf;</span> External LLM APIs</div>
+    <div class="nodes">
+      <div class="node" data-detail="anthropic" onclick="toggleDetail(this)">
+        <div class="node-name">Anthropic Claude</div>
+        <div class="node-detail">Primary provider<br>Streaming + tool-use</div>
+        <div class="node-file">anthropic_provider.py</div>
+      </div>
+      <div class="node" data-detail="openai" onclick="toggleDetail(this)">
+        <div class="node-name">OpenAI GPT</div>
+        <div class="node-detail">Fallback provider<br>Streaming + tool-use</div>
+        <div class="node-file">openai_provider.py</div>
+      </div>
+    </div>
+    <p class="click-hint">Click a provider to expand details</p>
+    <div class="detail-panel" id="panel-anthropic">
+      <div class="detail-inner">
+        <h3>Anthropic Claude <span class="file-tag">llm/anthropic_provider.py</span></h3>
+        <div class="detail-field full">
+          <div class="detail-label">Responsibility</div>
+          <div class="detail-value">Primary LLM provider using the Anthropic Messages API. Streams analysis responses as text chunks and supports multi-turn tool-use in chat via the native Anthropic tool calling protocol.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Model</div>
+          <div class="detail-value">Configurable via <code>ANTHROPIC_MODEL</code> env var. Uses <code>messages.stream()</code> for token-by-token delivery.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Error handling</div>
+          <div class="detail-value">Maps SDK exceptions (AuthenticationError, RateLimitError, APIConnectionError) to unified <code>LLMError</code> type. Tracks input/output tokens from response usage metadata.</div>
+        </div>
+        <div class="detail-field full">
+          <div class="detail-label">Depends on</div>
+          <div class="detail-deps">
+            <span class="detail-dep">anthropic Python SDK</span>
+            <span class="detail-dep">ANTHROPIC_API_KEY</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="detail-panel" id="panel-openai">
+      <div class="detail-inner">
+        <h3>OpenAI GPT <span class="file-tag">llm/openai_provider.py</span></h3>
+        <div class="detail-field full">
+          <div class="detail-label">Responsibility</div>
+          <div class="detail-value">Fallback LLM provider using the OpenAI Chat Completions API. Streams analysis and chat responses. Handles multi-round tool-use with function calling, accumulating tool call arguments across stream chunks.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Model</div>
+          <div class="detail-value">Configurable via <code>OPENAI_MODEL</code> env var (default: <code>gpt-4o</code>). Uses <code>chat.completions.create(stream=True)</code> with usage tracking.</div>
+        </div>
+        <div class="detail-field">
+          <div class="detail-label">Tool-use protocol</div>
+          <div class="detail-value">Accumulates tool call deltas by index across stream chunks. Executes tools via handler callback, appends results as tool messages, loops up to <code>MAX_TOOL_ROUNDS</code>.</div>
+        </div>
+        <div class="detail-field full">
+          <div class="detail-label">Depends on</div>
+          <div class="detail-deps">
+            <span class="detail-dep">openai Python SDK</span>
+            <span class="detail-dep">OPENAI_API_KEY</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="tech-row">
+      <span class="tech-badge">anthropic SDK</span>
+      <span class="tech-badge">openai SDK</span>
+      <span class="tech-badge">Auto-fallback on failure</span>
+    </div>
+  </div>
+
+  <div class="section-gap"></div>
+
+  <!-- Data Models -->
+  <div class="flow-section">
+    <div class="flow-title">Data Models</div>
+    <div class="models-strip">
+      <span class="model-chip">Session</span>
+      <span class="model-chip">BundleManifest</span>
+      <span class="model-chip">BundleFile</span>
+      <span class="model-chip">SignalType</span>
+      <span class="model-chip">AnalysisContext</span>
+      <span class="model-chip">DiagnosticReport</span>
+      <span class="model-chip">Finding</span>
+      <span class="model-chip">Severity</span>
+      <span class="model-chip">TimelineEvent</span>
+      <span class="model-chip">SourceCitation</span>
+      <span class="model-chip">ChatMessage</span>
+    </div>
+  </div>
+
+  <div class="section-gap"></div>
+
+  <!-- Constraints -->
+  <div class="flow-section">
+    <div class="flow-title">Golden Constraints</div>
+    <div class="constraints">
+      <div class="constraint"><span class="constraint-id">GR-1</span> Accept .tar.gz bundles</div>
+      <div class="constraint"><span class="constraint-id">GR-2</span> AI/LLM required for all analysis</div>
+      <div class="constraint"><span class="constraint-id">GR-3</span> Actionable diagnostics</div>
+      <div class="constraint"><span class="constraint-id">GR-5</span> Multi-signal breadth</div>
+      <div class="constraint"><span class="constraint-id">GR-6</span> Data stays in-memory only</div>
+      <div class="constraint"><span class="constraint-id">GR-7</span> Single-command startup</div>
+      <div class="constraint"><span class="constraint-id">GR-12</span> Arbitrary bundle support</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  let currentPanel = null;
+  let currentNode = null;
+
+  function toggleDetail(node) {
+    const detailId = 'panel-' + node.dataset.detail;
+    const panel = document.getElementById(detailId);
+    if (!panel) return;
+
+    // Close current panel if clicking the same node
+    if (currentPanel === panel) {
+      panel.classList.remove('open');
+      node.classList.remove('expanded');
+      currentPanel = null;
+      currentNode = null;
+      return;
+    }
+
+    // Close any previously open panel
+    if (currentPanel) {
+      currentPanel.classList.remove('open');
+      currentNode.classList.remove('expanded');
+    }
+
+    // Open new panel
+    panel.classList.add('open');
+    node.classList.add('expanded');
+    currentPanel = panel;
+    currentNode = node;
+
+    // Scroll panel into view smoothly
+    setTimeout(() => {
+      panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }, 100);
+  }
+</script>
+
+</body>
+</html>
