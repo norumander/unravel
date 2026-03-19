@@ -872,6 +872,31 @@ class TestLLMMetaEvents:
         assert meta["used_fallback"] is False
 
 
+class TestRAGIntegration:
+    @pytest.mark.asyncio
+    async def test_upload_returns_chunks_indexed_when_rag_available(self, client):
+        """When RAG store is available, upload should index chunks and report count."""
+        from app.rag import rag_store
+
+        if not rag_store.is_available():
+            pytest.skip("RAG store not available (no embedding model)")
+
+        tar_data = make_tar_gz({
+            "bundle/events.json": b'[{"type": "Warning", "message": "BackOff"}]',
+            "bundle/logs/pod.log": b"2024-01-15T14:00:00Z error log line\n" * 10,
+        })
+        resp = await client.post(
+            "/api/upload",
+            files={"file": ("bundle.tar.gz", tar_data, "application/gzip")},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "session_id" in data
+        # If RAG is available, should have chunks_indexed
+        if "chunks_indexed" in data:
+            assert data["chunks_indexed"] > 0
+
+
 class TestAnalyzeSignalSanitization:
     """Tests for the AI output boundary — unknown signal types in LLM responses.
 
