@@ -44,7 +44,9 @@ class LLMProvider(ABC):
         return self._last_output_tokens
 
     @abstractmethod
-    async def analyze(self, context: AnalysisContext) -> AsyncIterator[str]:
+    async def analyze(
+        self, context: AnalysisContext, extra_instruction: str | None = None
+    ) -> AsyncIterator[str]:
         """Stream analysis, yielding text chunks that form a DiagnosticReport JSON."""
         yield ""  # pragma: no cover
 

@@ -47,9 +47,13 @@ class OpenAIProvider(LLMProvider):
     def model_name(self) -> str:
         return self._model
 
-    async def analyze(self, context: AnalysisContext) -> AsyncIterator[str]:
+    async def analyze(
+        self, context: AnalysisContext, extra_instruction: str | None = None
+    ) -> AsyncIterator[str]:
         """Stream analysis of bundle content using OpenAI."""
         user_prompt = build_analysis_prompt(context)
+        if extra_instruction:
+            user_prompt += f"\n\n## Additional Instructions\n\n{extra_instruction}"
 
         try:
             stream = await self._client.chat.completions.create(

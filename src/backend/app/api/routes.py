@@ -18,6 +18,7 @@ from app.rag.retriever import retrieve_analysis_context, retrieve_for_query
 from app.llm.provider import TOOL_USE_SENTINEL, LLMError, get_fallback_provider, get_provider
 from app.logging.llm_logger import llm_logger
 from app.models.schemas import ChatMessage, DiagnosticReport
+from app.evals.evaluator import run_programmatic_evals
 from app.sessions.store import SessionNotFoundError, session_store
 
 MAX_CHAT_HISTORY = 40  # ~20 turns of user+assistant
@@ -278,6 +279,28 @@ async def analyze_bundle(session_id: str):
                 yield {
                     "data": json.dumps({"type": "report", "report": report.model_dump()})
                 }
+
+                # Run programmatic quality evals
+                bundle_signal_types = {
+                    st for st, files in session.classified_signals.items() if files
+                }
+                eval_report = run_programmatic_evals(
+                    report, bundle_signal_types, session.extracted_files
+                )
+
+                # Stream eval scores to frontend
+                yield {"data": json.dumps({
+                    "type": "eval_scores",
+                    **eval_report.to_dict(),
+                })}
+
+                # Attach eval scores to report
+                report.eval_scores = {
+                    r.dimension: r.score for r in eval_report.results
+                }
+                report.eval_scores["composite"] = eval_report.composite_score
+                session.report = report
+
             except Exception as exc:
                 import logging
                 logger = logging.getLogger(__name__)
