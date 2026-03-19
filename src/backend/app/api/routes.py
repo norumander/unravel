@@ -14,7 +14,7 @@ from app.bundle.chunker import chunk_file
 from app.bundle.classifier import classify_files
 from app.bundle.parser import BundleTooLargeError, InvalidBundleError, parse_bundle
 from app.rag import rag_store
-from app.rag.retriever import retrieve_analysis_context
+from app.rag.retriever import retrieve_analysis_context, retrieve_for_query
 from app.llm.provider import TOOL_USE_SENTINEL, LLMError, get_fallback_provider, get_provider
 from app.logging.llm_logger import llm_logger
 from app.models.schemas import ChatMessage, DiagnosticReport
@@ -38,6 +38,30 @@ GET_FILE_CONTENTS_TOOL = {
             }
         },
         "required": ["file_path"],
+    },
+}
+
+SEARCH_BUNDLE_TOOL = {
+    "name": "search_bundle",
+    "description": (
+        "Semantically search the support bundle for content related to a query. "
+        "Returns the most relevant chunks with file paths and context. "
+        "Use this FIRST to find relevant content, then use get_file_contents "
+        "only if you need the complete file."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Natural language description of what you're looking for.",
+            },
+            "max_results": {
+                "type": "integer",
+                "description": "Maximum number of chunks to return (default 10).",
+            },
+        },
+        "required": ["query"],
     },
 }
 
@@ -325,7 +349,27 @@ async def chat(session_id: str, body: ChatRequest):
                 if content is None:
                     return f"File not found in bundle: {file_path}"
                 return content.decode("utf-8", errors="replace")
+            if name == "search_bundle":
+                if not rag_store.is_available() or not session.chroma_collection_name:
+                    return "Semantic search is not available. Use get_file_contents instead."
+                query = arguments.get("query", "")
+                max_results = arguments.get("max_results", 10)
+                results = retrieve_for_query(
+                    rag_store, session.chroma_collection_name, query, max_results=max_results
+                )
+                if not results:
+                    return f"No results found for query: {query}"
+                parts = []
+                for r in results:
+                    parts.append(
+                        f"--- {r.file_path} ({r.signal_type.value}, relevance: {r.score:.2f}) ---\n{r.text}"
+                    )
+                return "\n\n".join(parts)
             return f"Unknown tool: {name}"
+
+        tools = [GET_FILE_CONTENTS_TOOL]
+        if rag_store.is_available() and session.chroma_collection_name:
+            tools = [SEARCH_BUNDLE_TOOL, GET_FILE_CONTENTS_TOOL]
 
         async def _run_chat(p):
             nonlocal collected
@@ -333,7 +377,7 @@ async def chat(session_id: str, body: ChatRequest):
                 session_id, "chat", p.provider_name, p.model_name
             ) as tracker:
                 async for chunk in p.chat(
-                    messages, [GET_FILE_CONTENTS_TOOL], tool_handler
+                    messages, tools, tool_handler
                 ):
                     if chunk.startswith(TOOL_USE_SENTINEL):
                         tool_data = json.loads(chunk[len(TOOL_USE_SENTINEL):])

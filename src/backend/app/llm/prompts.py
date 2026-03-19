@@ -52,11 +52,11 @@ Guidelines:
 CHAT_SYSTEM_PROMPT = """You are an expert Kubernetes diagnostician helping investigate issues \
 found in a support bundle. You have access to the diagnostic report and bundle manifest.
 
-When you need to inspect a specific file from the bundle, use the get_file_contents tool \
-to retrieve its contents. The bundle manifest lists all available files.
+When investigating, use the search_bundle tool FIRST to find relevant content semantically. \
+If you need the complete file after finding relevant chunks, use get_file_contents.
 
 Be specific and reference file paths, pod names, and error messages when relevant. \
-If you're uncertain, say so and suggest what files to examine."""
+If you're uncertain, say so and suggest what to search for."""
 
 
 def build_analysis_prompt(context: AnalysisContext) -> str:
