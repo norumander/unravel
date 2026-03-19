@@ -59,6 +59,8 @@ docker compose up
 
 The app will be available at **http://localhost:3000**.
 
+> **Note**: The Docker image is ~700MB due to the bundled sentence-transformers embedding model (PyTorch + all-MiniLM-L6-v2). The first `docker compose build` will take longer than usual while the model is downloaded into the image. Subsequent builds are cached.
+
 ### Environment Variables
 
 | Variable | Required | Description |
@@ -68,6 +70,9 @@ The app will be available at **http://localhost:3000**.
 | `OPENAI_API_KEY` | If provider=openai | Your OpenAI API key |
 | `ANTHROPIC_MODEL` | No | Override model (default: `claude-sonnet-4-20250514`) |
 | `OPENAI_MODEL` | No | Override model (default: `gpt-4o`) |
+| `RAG_CHUNK_SIZE` | No | Embedding chunk size in tokens (default: `512`) |
+| `RAG_CHUNK_OVERLAP` | No | Chunk overlap in tokens (default: `50`) |
+| `EVAL_THRESHOLD` | No | Minimum coverage score for quality eval (default: `0.7`) |
 
 ## Usage
 
@@ -82,10 +87,11 @@ The app will be available at **http://localhost:3000**.
 
 1. **Bundle Parsing**: Extracts the tar.gz in memory, validates format, prevents path traversal
 2. **Signal Classification**: Categorizes files by path patterns into 5 signal types (pod logs, events, cluster info, resource definitions, node status). The sidebar file explorer groups files by these types so you can browse the raw data
-3. **Event Timeline Extraction**: Kubernetes events are parsed and displayed chronologically with severity indicators, giving a quick view of what happened and when
-4. **Context Assembly**: Prioritizes and truncates content to fit the LLM context window (~100K tokens). Priority: events > pod logs > cluster info > resource definitions > node status
-5. **LLM Analysis**: Streams a structured diagnostic report via SSE with findings, root causes, and remediations (with copy-to-clipboard on each remediation)
-6. **Interactive Chat**: Follow-up investigation with tool-use — the LLM can request specific bundle files via `get_file_contents`. Suggested follow-up questions are generated from the report findings to help guide the investigation
+3. **RAG Pipeline**: After classification, files are chunked using content-type-aware strategies (per-event for JSON, per-document for YAML, windowed for logs) and embedded locally using `all-MiniLM-L6-v2` into a session-scoped ChromaDB collection. This enables semantic retrieval during analysis and chat
+4. **Event Timeline Extraction**: Kubernetes events are parsed and displayed chronologically with severity indicators, giving a quick view of what happened and when
+5. **Context Assembly**: Diagnostic queries retrieve the most relevant chunks via semantic search, then content is prioritized and truncated to fit the LLM context window (~100K tokens)
+6. **LLM Analysis**: Streams a structured diagnostic report via SSE with findings, root causes, and remediations (with copy-to-clipboard on each remediation). A quality evaluator checks coverage and citation accuracy after generation
+7. **Interactive Chat**: Follow-up investigation with two tools — `search_bundle` for semantic retrieval of relevant chunks, and `get_file_contents` for full file access. Suggested follow-up questions are generated from the report findings to help guide the investigation
 
 All bundle data is held in memory only and never persisted to disk. Sessions are cleared on delete or server restart.
 
@@ -119,10 +125,12 @@ npm run dev  # Dev server on :3000
 │   │   ├── app/
 │   │   │   ├── api/          # FastAPI routes
 │   │   │   ├── analysis/     # Context assembly, chat engine
-│   │   │   ├── bundle/       # Parser, signal classifier
+│   │   │   ├── bundle/       # Parser, signal classifier, chunker
+│   │   │   ├── evals/        # Programmatic quality evaluator
 │   │   │   ├── llm/          # Provider interface + implementations
 │   │   │   ├── logging/      # Structured LLM call logger
 │   │   │   ├── models/       # Pydantic schemas
+│   │   │   ├── rag/          # Embedder (ChromaDB) + retriever
 │   │   │   └── sessions/     # In-memory session store
 │   │   └── tests/
 │   └── frontend/
