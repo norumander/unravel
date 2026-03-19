@@ -10,8 +10,11 @@ from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 
 from app.analysis.context import assemble_context
+from app.bundle.chunker import chunk_file
 from app.bundle.classifier import classify_files
 from app.bundle.parser import BundleTooLargeError, InvalidBundleError, parse_bundle
+from app.rag import rag_store
+from app.rag.retriever import retrieve_analysis_context
 from app.llm.provider import TOOL_USE_SENTINEL, LLMError, get_fallback_provider, get_provider
 from app.logging.llm_logger import llm_logger
 from app.models.schemas import ChatMessage, DiagnosticReport
@@ -95,6 +98,19 @@ async def upload_bundle(file: UploadFile) -> JSONResponse:
     classified = classify_files(manifest)
     session = session_store.create(manifest, extracted_files, classified)
 
+    # RAG: chunk and embed files for semantic search
+    if rag_store.is_available():
+        chunks = []
+        for bf in manifest.files:
+            file_content = extracted_files.get(bf.path)
+            if file_content is None:
+                continue
+            text = file_content.decode("utf-8", errors="replace")
+            chunks.extend(chunk_file(bf.path, text, bf.signal_type))
+
+        collection_name = rag_store.create_collection(session.session_id, chunks)
+        session.chroma_collection_name = collection_name
+
     signal_summary = {
         signal_type.value: len(files)
         for signal_type, files in classified.items()
@@ -105,6 +121,8 @@ async def upload_bundle(file: UploadFile) -> JSONResponse:
         "manifest": manifest.model_dump(),
         "signal_summary": signal_summary,
     }
+    if session.chroma_collection_name:
+        response_content["chunks_indexed"] = len(chunks) if rag_store.is_available() else 0
     if parse_warnings:
         response_content["warnings"] = parse_warnings
 
@@ -139,9 +157,15 @@ async def analyze_bundle(session_id: str):
                 yield {"data": json.dumps({"type": "error", "message": str(e)})}
                 return
 
-            context = assemble_context(
-                session.classified_signals, session.extracted_files
-            )
+            if rag_store.is_available() and session.chroma_collection_name:
+                context = retrieve_analysis_context(
+                    rag_store, session.chroma_collection_name,
+                    bundle_manifest=session.bundle_manifest,
+                )
+            else:
+                context = assemble_context(
+                    session.classified_signals, session.extracted_files
+                )
 
             collected = ""
             primary_error = None

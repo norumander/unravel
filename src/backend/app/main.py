@@ -24,6 +24,17 @@ app.add_middleware(
 
 app.include_router(router)
 
+from app.rag import rag_store
+from app.sessions.store import session_store
+
+
+def _cleanup_chroma(session):
+    if session.chroma_collection_name:
+        rag_store.delete_collection(session.chroma_collection_name)
+
+
+session_store.register_cleanup_hook(_cleanup_chroma)
+
 
 @app.get("/api/health")
 async def health() -> dict:
