@@ -263,3 +263,44 @@ class TestSession:
         )
         assert len(session.extracted_files) == 1
         assert SignalType.pod_logs in session.classified_signals
+
+
+class TestSessionChromaField:
+    def test_session_chroma_collection_default_none(self):
+        session = Session(
+            session_id="test",
+            bundle_manifest=BundleManifest(total_files=0, total_size_bytes=0, files=[]),
+            extracted_files={},
+            classified_signals={},
+        )
+        assert session.chroma_collection_name is None
+
+    def test_session_chroma_collection_set(self):
+        session = Session(
+            session_id="test",
+            bundle_manifest=BundleManifest(total_files=0, total_size_bytes=0, files=[]),
+            extracted_files={},
+            classified_signals={},
+            chroma_collection_name="session-test",
+        )
+        assert session.chroma_collection_name == "session-test"
+
+
+class TestDiagnosticReportEvalScores:
+    def test_report_eval_scores_default_none(self):
+        report = DiagnosticReport(
+            executive_summary="test",
+            findings=[],
+            signal_types_analyzed=[SignalType.events],
+        )
+        assert report.eval_scores is None
+
+    def test_report_eval_scores_set(self):
+        scores = {"coverage": 0.9, "citation_accuracy": 1.0}
+        report = DiagnosticReport(
+            executive_summary="test",
+            findings=[],
+            signal_types_analyzed=[SignalType.events],
+            eval_scores=scores,
+        )
+        assert report.eval_scores["coverage"] == 0.9

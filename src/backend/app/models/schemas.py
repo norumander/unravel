@@ -78,6 +78,7 @@ class DiagnosticReport(BaseModel):
     signal_types_analyzed: list[SignalType]
     truncation_notes: str | None = None
     timeline: list[TimelineEvent] = Field(default_factory=list)
+    eval_scores: dict[str, float] | None = None
 
 
 class ToolCall(BaseModel):
@@ -116,3 +117,4 @@ class Session(BaseModel):
     report: DiagnosticReport | None = None
     analyzing: bool = False
     chat_history: list[ChatMessage] = Field(default_factory=list)
+    chroma_collection_name: str | None = None

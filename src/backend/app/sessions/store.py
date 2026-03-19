@@ -1,7 +1,11 @@
 """In-memory session store — manages session lifecycle with no disk I/O."""
 
+import logging
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
+
+logger = logging.getLogger(__name__)
 
 from app.models.schemas import BundleFile, BundleManifest, Session, SignalType
 
@@ -23,6 +27,19 @@ class SessionStore:
 
     def __init__(self) -> None:
         self._sessions: dict[str, Session] = {}
+        self._cleanup_hooks: list[Callable[[Session], None]] = []
+
+    def register_cleanup_hook(self, hook: Callable[[Session], None]) -> None:
+        """Register a callback that runs before a session is deleted."""
+        self._cleanup_hooks.append(hook)
+
+    def _run_cleanup(self, session: Session) -> None:
+        """Run all cleanup hooks for a session."""
+        for hook in self._cleanup_hooks:
+            try:
+                hook(session)
+            except Exception:
+                logger.warning("Cleanup hook failed for session %s", session.session_id, exc_info=True)
 
     def create(
         self,
@@ -38,6 +55,7 @@ class SessionStore:
             oldest_id = min(
                 self._sessions, key=lambda k: self._sessions[k].created_at
             )
+            self._run_cleanup(self._sessions[oldest_id])
             del self._sessions[oldest_id]
 
         session_id = str(uuid.uuid4())
@@ -70,6 +88,7 @@ class SessionStore:
         """
         if session_id not in self._sessions:
             raise SessionNotFoundError(f"Session not found: {session_id}")
+        self._run_cleanup(self._sessions[session_id])
         del self._sessions[session_id]
         return True
 
@@ -82,6 +101,7 @@ class SessionStore:
             if (now - session.created_at).total_seconds() > SESSION_TTL_SECONDS
         ]
         for sid in expired:
+            self._run_cleanup(self._sessions[sid])
             del self._sessions[sid]
 
 
