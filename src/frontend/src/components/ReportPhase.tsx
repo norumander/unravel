@@ -204,6 +204,11 @@ export function ReportPhase({
   const [analysisComplete, setAnalysisComplete] = useState(false)
   const [chunkCount, setChunkCount] = useState(0)
   const [llmMeta, setLlmMeta] = useState<LLMMeta | null>(null)
+  const [evalScores, setEvalScores] = useState<{
+    composite_score: number;
+    passed: boolean;
+    dimensions: Record<string, { score: number; issues: string[] }>;
+  } | null>(null)
   const startedRef = useRef(false)
   const hintIndexRef = useRef(0)
   const [hintIndex, setHintIndex] = useState(0)
@@ -216,6 +221,12 @@ export function ReportPhase({
       } else if (event.type === 'llm_meta') {
         const { type: _, ...meta } = event
         setLlmMeta(meta as LLMMeta)
+      } else if (event.type === 'eval_scores') {
+        setEvalScores({
+          composite_score: event.composite_score,
+          passed: event.passed,
+          dimensions: event.dimensions,
+        })
       }
     },
     [onReportComplete],
@@ -488,7 +499,7 @@ export function ReportPhase({
             ))}
           </div>
 
-          {/* Footer — signal types + LLM metrics */}
+          {/* Footer — signal types + LLM metrics + eval scores */}
           <div className="animate-fade-in-up space-y-3" style={{ animationDelay: '300ms' }}>
             <div className="text-xs text-zinc-600">
               Signal types analyzed: {report.signal_types_analyzed.join(', ')}
@@ -520,6 +531,49 @@ export function ReportPhase({
                       Fallback
                     </span>
                   )}
+                </div>
+              </div>
+            )}
+
+            {evalScores && (
+              <div
+                data-testid="eval-scores"
+                className="rounded-lg border border-zinc-700 bg-zinc-800/50 p-4"
+              >
+                <h3 className="text-sm font-medium text-zinc-300 mb-2">Analysis Quality</h3>
+                <div className="flex items-center gap-3">
+                  <div
+                    className="text-2xl font-bold"
+                    style={{
+                      color: evalScores.composite_score >= 0.8
+                        ? '#4ade80'
+                        : evalScores.composite_score >= 0.5
+                          ? '#fbbf24'
+                          : '#f87171',
+                    }}
+                  >
+                    {Math.round(evalScores.composite_score * 100)}%
+                  </div>
+                  <div className="text-xs text-zinc-400 space-y-0.5">
+                    {Object.entries(evalScores.dimensions).map(([dim, data]) => (
+                      <div key={dim} className="flex items-center gap-1.5">
+                        <span
+                          className={
+                            data.score >= 0.8
+                              ? 'text-green-400'
+                              : data.score >= 0.5
+                                ? 'text-yellow-400'
+                                : 'text-red-400'
+                          }
+                        >
+                          ●
+                        </span>
+                        <span className="capitalize">
+                          {dim.replace('_', ' ')}: {Math.round(data.score * 100)}%
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}

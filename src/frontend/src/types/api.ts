@@ -45,6 +45,7 @@ export interface DiagnosticReport {
   signal_types_analyzed: string[]
   truncation_notes: string | null
   timeline?: TimelineEvent[]
+  eval_scores?: Record<string, number>
 }
 
 export interface LLMMeta {
@@ -64,6 +65,8 @@ export type SSEEvent =
   | { type: 'done' }
   | { type: 'error'; message: string }
   | { type: 'warning'; message: string }
+  | { type: 'progress'; stage: string; chunks?: number; reason?: string }
+  | { type: 'eval_scores'; composite_score: number; passed: boolean; dimensions: Record<string, { score: number; issues: string[] }> }
 
 export interface ChatMessage {
   role: 'user' | 'assistant'
