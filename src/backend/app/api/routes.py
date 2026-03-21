@@ -17,9 +17,13 @@ from app.rag import rag_store
 from app.rag.retriever import retrieve_analysis_context, retrieve_for_query
 from app.llm.provider import TOOL_USE_SENTINEL, LLMError, get_fallback_provider, get_provider
 from app.logging.llm_logger import llm_logger
-from app.models.schemas import ChatMessage, DiagnosticReport
+from app.models.schemas import ChatMessage, DiagnosticReport, FindingSummary, LLMMetaSummary, SessionSummary
 from app.evals.evaluator import run_programmatic_evals
 from app.sessions.store import SessionNotFoundError, session_store
+from app.sessions.persistence import SessionPersistence
+from app.sessions.metadata import extract_bundle_metadata
+from app.api.session_routes import get_persistence as _get_persistence
+from datetime import datetime, UTC
 
 MAX_CHAT_HISTORY = 40  # ~20 turns of user+assistant
 
@@ -313,6 +317,47 @@ async def analyze_bundle(session_id: str):
                     })
                 }
 
+            # Persist completed session to disk
+            try:
+                persistence = _get_persistence()
+                bundle_metadata = extract_bundle_metadata(session.extracted_files)
+                findings = [
+                    FindingSummary(severity=f.severity.value, title=f.title)
+                    for f in report.findings
+                ] if report else []
+
+                llm_meta_summary = None
+                if llm_meta:
+                    llm_meta_summary = LLMMetaSummary(
+                        provider=llm_meta.get("provider", "unknown"),
+                        model=llm_meta.get("model", "unknown"),
+                        input_tokens=llm_meta.get("input_tokens", 0),
+                        output_tokens=llm_meta.get("output_tokens", 0),
+                        latency_ms=llm_meta.get("latency_ms", 0),
+                    )
+
+                summary = SessionSummary(
+                    id=session_id,
+                    bundle_name=session.bundle_manifest.files[0].path.split("/")[0] + ".tar.gz"
+                    if session.bundle_manifest.files
+                    else "unknown.tar.gz",
+                    file_size=session.bundle_manifest.total_size_bytes,
+                    timestamp=datetime.now(UTC).isoformat(),
+                    status="completed",
+                    bundle_metadata=bundle_metadata,
+                    findings_summary=findings,
+                    llm_meta=llm_meta_summary,
+                    eval_score=eval_report.composite_score if eval_report else None,
+                )
+
+                report_dict = report.model_dump() if report else {}
+                persistence.save_session(summary, report=report_dict)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).exception(
+                    "Failed to persist session %s", session_id
+                )
+
             # Send done event to flush the proxy buffer — without this,
             # the report event can be lost when the connection closes
             yield {"data": json.dumps({"type": "done"})}
@@ -332,6 +377,15 @@ async def chat(session_id: str, body: ChatRequest):
 
     # Add user message to chat history
     session.chat_history.append(ChatMessage(role="user", content=body.message))
+
+    # Persist user message to disk
+    try:
+        _get_persistence().append_chat(
+            session_id,
+            {"role": "user", "content": body.message, "timestamp": datetime.now(UTC).isoformat()},
+        )
+    except Exception:
+        pass  # Chat persistence is best-effort
 
     # Cap chat history to prevent unbounded context growth
     if len(session.chat_history) > MAX_CHAT_HISTORY:
@@ -456,6 +510,15 @@ async def chat(session_id: str, body: ChatRequest):
             session.chat_history.append(
                 ChatMessage(role="assistant", content=collected)
             )
+
+            # Persist assistant message to disk
+            try:
+                _get_persistence().append_chat(
+                    session_id,
+                    {"role": "assistant", "content": collected, "timestamp": datetime.now(UTC).isoformat()},
+                )
+            except Exception:
+                pass  # Chat persistence is best-effort
 
         # Emit LLM call metadata to the client
         yield {"data": json.dumps({
