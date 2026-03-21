@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import router
+from app.api.session_routes import router as session_router
 
 app = FastAPI(
     title="Unravel",
@@ -23,6 +24,7 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(session_router)
 
 from app.rag import rag_store
 from app.sessions.store import session_store
