@@ -18,8 +18,10 @@ A prototype web application that ingests Kubernetes Troubleshoot support bundles
 
 ### Data & Security
 
-- **GR-6**: Bundle data must be treated as sensitive. No bundle content may be persisted to disk beyond the active analysis session. No bundle content may be sent to external services other than the configured LLM provider. No API keys, secrets, or credentials may be committed to the repository — use `.env.example` with placeholder values instead.
+- **GR-6**: Bundle data must be treated as sensitive. No bundle content may be sent to external services other than the configured LLM provider. No API keys, secrets, or credentials may be committed to the repository — use `.env.example` with placeholder values instead.
   - *Source: User decision + domain inference (bundles contain real cluster state, logs, and potentially sensitive configuration).*
+  - **GR-6a (Addendum)**: Analysis results, generated reports, extracted bundle metadata (filenames, cluster IDs, namespace names, finding summaries), and LLM observability data MAY be persisted to local storage (JSON files) for session history and the session explorer feature. Raw bundle archives (.tar.gz) should still be cleaned up after extraction, but derived analysis data is not subject to the original session-scoped restriction.
+    - *Justification: The original assignment doc specifies "Technical Constraints: None" and explicitly encourages exploring interesting additions to the problem domain ("put yourself in our shoes — what else can you do?"). Session persistence enables a session explorer — a realistic SRE workflow feature that demonstrates product thinking beyond single-use analysis. The no-external-services constraint remains intact.*
 
 ### Architecture
 
