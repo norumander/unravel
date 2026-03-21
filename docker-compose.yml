@@ -11,6 +11,8 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-}
       - OPENAI_MODEL=${OPENAI_MODEL:-}
+    volumes:
+      - session-data:/app/data/sessions
 
   frontend:
     build:
@@ -20,3 +22,6 @@ services:
     mem_limit: 512m
     depends_on:
       - backend
+
+volumes:
+  session-data:
