@@ -2,6 +2,7 @@
 
 from datetime import UTC, datetime
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -96,6 +97,48 @@ class ChatMessage(BaseModel):
     content: str
     tool_call: ToolCall | None = None
     timestamp: datetime = Field(default_factory=lambda: datetime.now(tz=UTC))
+
+
+class FindingSummary(BaseModel):
+    """Lightweight finding for session index — severity + title only."""
+
+    severity: Literal["critical", "warning", "info"]
+    title: str
+
+
+class BundleMetadata(BaseModel):
+    """Auto-extracted metadata from the support bundle."""
+
+    cluster: str | None = None
+    namespaces: list[str] = Field(default_factory=list)
+    k8s_version: str | None = None
+    node_count: int | None = None
+
+
+class LLMMetaSummary(BaseModel):
+    """LLM call metadata for session persistence."""
+
+    provider: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    latency_ms: int
+
+
+class SessionSummary(BaseModel):
+    """Session index entry — lightweight data for the dashboard table."""
+
+    id: str
+    bundle_name: str
+    file_size: int
+    timestamp: str
+    status: Literal["completed", "error"]
+    bundle_metadata: BundleMetadata = Field(default_factory=BundleMetadata)
+    findings_summary: list[FindingSummary] = Field(default_factory=list)
+    llm_meta: LLMMetaSummary | None = None
+    eval_score: float | None = None
+    notes: str = ""
+    tags: list[str] = Field(default_factory=list)
 
 
 class AnalysisContext(BaseModel):
