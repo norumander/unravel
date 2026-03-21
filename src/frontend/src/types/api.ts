@@ -72,3 +72,45 @@ export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string
 }
+
+/* ── Session Explorer types ────────────────────────── */
+
+export interface FindingSummary {
+  severity: 'critical' | 'warning' | 'info'
+  title: string
+}
+
+export interface BundleMetadataSummary {
+  cluster: string | null
+  namespaces: string[]
+  k8s_version: string | null
+  node_count: number | null
+}
+
+export interface LLMMetaSummary {
+  provider: string
+  model: string
+  input_tokens: number
+  output_tokens: number
+  latency_ms: number
+}
+
+export interface SessionSummary {
+  id: string
+  bundle_name: string
+  file_size: number
+  timestamp: string
+  status: 'completed' | 'error'
+  bundle_metadata: BundleMetadataSummary
+  findings_summary: FindingSummary[]
+  llm_meta: LLMMetaSummary | null
+  eval_score: number | null
+  notes: string
+  tags: string[]
+}
+
+export interface SessionDetail {
+  summary: SessionSummary
+  report: DiagnosticReport | null
+  chat: ChatMessage[]
+}
