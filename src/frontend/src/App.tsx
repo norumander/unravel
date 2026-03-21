@@ -5,16 +5,20 @@ import { ChatPhase } from './components/ChatPhase'
 import { FileViewer } from './components/FileViewer'
 import { LogoMark } from './components/Logo'
 import FileExplorer from './components/FileExplorer'
+import { SessionExplorer } from './components/SessionExplorer'
+import { SessionDetail } from './components/SessionDetail'
 import { ToastContainer, useToast } from './components/Toast'
 import { downloadMarkdown } from './utils/exportMarkdown'
 import { buildAgentContext } from './utils/exportAgentContext'
-import type { BundleManifest, ChatMessage, DiagnosticReport } from './types/api'
+import type { BundleManifest, ChatMessage, DiagnosticReport, SessionDetail as SessionDetailType } from './types/api'
 
-type AppPhase = 'upload' | 'dashboard'
+type AppPhase = 'explorer' | 'upload' | 'dashboard'
 
 function App() {
-  const [phase, setPhase] = useState<AppPhase>('upload')
+  const [phase, setPhase] = useState<AppPhase>('explorer')
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null)
+  const [isViewingSaved, setIsViewingSaved] = useState(false)
   const [manifest, setManifest] = useState<BundleManifest | null>(null)
   const [signalSummary, setSignalSummary] = useState<Record<string, number>>({})
   const [report, setReport] = useState<DiagnosticReport | null>(null)
@@ -42,17 +46,73 @@ function App() {
   }, [])
 
   const handleReset = useCallback(async () => {
-    if (sessionId) {
+    if (sessionId && !isViewingSaved) {
       await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' }).catch(() => {})
     }
-    setPhase('upload')
+    setPhase('explorer')
     setSessionId(null)
     setManifest(null)
     setSignalSummary({})
     setReport(null)
     setSelectedFile(null)
     setChatMessages([])
-  }, [sessionId])
+    setSelectedSessionId(null)
+    setIsViewingSaved(false)
+  }, [sessionId, isViewingSaved])
+
+  const handleOpenSavedSession = useCallback((detail: SessionDetailType) => {
+    setSessionId(detail.summary.id)
+    setReport(detail.report)
+    setChatMessages(detail.chat || [])
+    setManifest({
+      total_files: 0,
+      total_size_bytes: detail.summary.file_size,
+      files: [],
+    })
+    setSignalSummary({})
+    setSelectedSessionId(null)
+    setIsViewingSaved(true)
+    setPhase('dashboard')
+  }, [])
+
+  const handleBackToExplorer = useCallback(() => {
+    setReport(null)
+    setSelectedFile(null)
+    setChatMessages([])
+    setSessionId(null)
+    setManifest(null)
+    setSignalSummary({})
+    setSelectedSessionId(null)
+    setIsViewingSaved(false)
+    setPhase('explorer')
+  }, [])
+
+  const handleSessionDeleted = useCallback((_deletedId: string) => {
+    setSelectedSessionId(null)
+  }, [])
+
+  // Explorer phase — session history dashboard
+  if (phase === 'explorer') {
+    return (
+      <div className="flex h-screen">
+        <ToastContainer toasts={toasts} onDismiss={dismissToast} />
+        <div className="flex-1 overflow-auto">
+          <SessionExplorer
+            onNewAnalysis={() => setPhase('upload')}
+            onSelectSession={(id) => setSelectedSessionId(id)}
+          />
+        </div>
+        {selectedSessionId && (
+          <SessionDetail
+            sessionId={selectedSessionId}
+            onClose={() => setSelectedSessionId(null)}
+            onOpenReport={handleOpenSavedSession}
+            onDelete={handleSessionDeleted}
+          />
+        )}
+      </div>
+    )
+  }
 
   // Upload phase — centered, minimal
   if (phase === 'upload') {
@@ -143,10 +203,10 @@ function App() {
             </>
           )}
           <button
-            onClick={handleReset}
+            onClick={handleBackToExplorer}
             className="w-full rounded-lg border border-zinc-700 px-3 py-2 text-xs text-zinc-400 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
           >
-            New Analysis
+            ← Back to Explorer
           </button>
         </div>
       </aside>
