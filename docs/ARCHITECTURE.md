@@ -23,8 +23,14 @@ graph TB
         CA[Context Assembler + Truncation]
         CE[Chat Engine]
         SS[Session Store]
+        SP[Session Persistence]
+        ME[Metadata Extractor]
         SL[Structured Logger]
         PI[LLM Provider Interface]
+    end
+
+    subgraph Storage ["Docker Volume"]
+        JF["/app/data/sessions/\nsessions.json + per-session dirs"]
     end
 
     subgraph LLM ["External LLM APIs"]
@@ -35,6 +41,7 @@ graph TB
     UI -->|"POST /api/upload (multipart)"| API
     UI -->|"GET /api/analyze/:id (SSE)"| API
     UI -->|"POST /api/chat/:id (SSE)"| API
+    UI -->|"GET/PATCH/DELETE /api/history"| API
     UI -->|"DELETE /api/sessions/:id"| API
 
     API --> BP
@@ -48,6 +55,9 @@ graph TB
     API --> CE
     CE --> PI
     CE --> SS
+    API --> SP
+    SP --> JF
+    SP --> ME
     PI --> ANT
     PI --> OAI
     PI --> SL
@@ -113,10 +123,23 @@ graph TB
 - **Dependencies**: LLM provider, session store, Retriever.
 
 ### Session Store (`src/backend/sessions/store.py`)
-- **Responsibility**: In-memory storage of session objects (bundle data, manifest, report, chat history). No persistence.
+- **Responsibility**: In-memory storage of active session objects (bundle data, manifest, report, chat history). Manages runtime state during analysis and chat.
 - **Interfaces**: `create(manifest, files, classified) -> Session`, `get(session_id) -> Session`, `delete(session_id) -> bool`
 - **Dependencies**: None.
-- **GR-6 compliance**: All data in-memory only. Delete clears all references. Server restart clears all sessions.
+- **Notes**: Active session data lives in-memory only. Delete clears all references. Server restart clears active sessions. Completed analyses are separately persisted by SessionPersistence.
+
+### Session Persistence (`src/backend/sessions/persistence.py`)
+- **Responsibility**: Persist completed session data (reports, chat transcripts, metadata) to JSON files on disk for the session explorer dashboard. Separate from SessionStore — this writes durable records, not runtime state.
+- **Interfaces**: `save_session(summary, report, chat)`, `list_sessions()`, `get_session(id)`, `update_session(id, notes, tags)`, `delete_session(id)`, `append_chat(id, message)`
+- **Dependencies**: None (file I/O only).
+- **Storage layout**: `{data_dir}/sessions.json` (index) + `{session_id}/report.json` + `{session_id}/chat.json`
+- **Config**: `SESSION_DATA_DIR` env var (default `/app/data/sessions`), backed by Docker named volume.
+- **GR-6a compliance**: Persists derived analysis data (reports, findings, metadata), not raw bundle content.
+
+### Metadata Extractor (`src/backend/sessions/metadata.py`)
+- **Responsibility**: Extract structured cluster metadata from bundle files (K8s version, node count, namespaces). Best-effort — returns defaults for missing or malformed data.
+- **Interfaces**: `extract_bundle_metadata(extracted_files: dict[str, bytes]) -> BundleMetadata`
+- **Dependencies**: None (JSON parsing, regex on file paths).
 
 ### Structured Logger (`src/backend/logging/llm_logger.py`)
 - **Responsibility**: Emit JSON log entries to stdout for every LLM API call.
@@ -125,22 +148,23 @@ graph TB
 - **GR-6 compliance**: No bundle content in log entries.
 
 ### API Layer (`src/backend/api/`)
-- **Responsibility**: FastAPI routes for upload, analyze, chat, session delete. SSE streaming for analyze and chat.
-- **Endpoints**: See PRD API contracts.
+- **Responsibility**: FastAPI routes for upload, analyze, chat, session delete, and session history CRUD.
+- **Endpoints**: `POST /api/upload`, `GET /api/analyze/:id` (SSE), `POST /api/chat/:id` (SSE), `DELETE /api/sessions/:id`, `GET /api/history`, `GET /api/history/:id`, `PATCH /api/history/:id`, `DELETE /api/history/:id`
 - **Dependencies**: All backend components.
 
 ### Frontend (`src/frontend/`)
-- **Responsibility**: React SPA with three-phase UI: upload (drag-and-drop) → report display (streaming, structured findings) → chat interface (streaming, tool-use indicators).
+- **Responsibility**: React SPA with four-phase UI: session explorer (dashboard) → upload (drag-and-drop) → report display (streaming, structured findings) → chat interface (streaming, tool-use indicators). Saved sessions can be re-opened in read-only mode.
 - **Tech**: React 18, TypeScript, Vite, Tailwind CSS.
 - **State**: useState/useReducer. No external state library.
-- **Communication**: REST for upload/delete, SSE (EventSource) for analyze/chat.
+- **Communication**: REST for upload/delete/history, SSE (EventSource) for analyze/chat.
 
 ## Data Flow
 
 ```
 Upload:   parse → classify → chunk → embed (ChromaDB) → session
-Analyze:  semantic retrieval → context assembly → LLM analysis → quality eval → report
-Chat:     search_bundle tool (semantic via Retriever) | get_file_contents (full file from session)
+Analyze:  semantic retrieval → context assembly → LLM analysis → quality eval → report → persist
+Chat:     search_bundle tool (semantic via Retriever) | get_file_contents (full file from session) → persist messages
+History:  list sessions (from index) | get session (report + chat) | update notes | delete
 ```
 
 ## Tech Stack
@@ -158,10 +182,11 @@ Chat:     search_bundle tool (semantic via Retriever) | get_file_contents (full 
 | Backend testing | pytest + pytest-asyncio | Standard async testing for FastAPI |
 | Frontend testing | Vitest + React Testing Library | Vite-native, component testing |
 | Runtime | Docker Compose | Two containers, single `docker compose up` (GR-7) |
+| Session persistence | JSON files on Docker volume | Lightweight, no database dependency, survives restarts |
 
 ## Data Models
 
-Defined in `src/backend/models/`. All in-memory, no database.
+Defined in `src/backend/models/`. Active sessions in-memory; completed sessions persisted as JSON.
 
 - **Session** — session_id, created_at, bundle_manifest, extracted_files, classified_signals, chroma_collection_id, report, chat_history
 - **BundleManifest** — total_files, total_size_bytes, files[]
@@ -175,6 +200,10 @@ Defined in `src/backend/models/`. All in-memory, no database.
 - **AnalysisContext** — signal_contents (per-type text), truncation_notes, manifest
 - **Chunk** — session_id, file_path, signal_type, text, token_count, chunk_index
 - **EvalResult** — passed, coverage_score, citation_accuracy, failures[]
+- **SessionSummary** — id, bundle_name, file_size, timestamp, status, bundle_metadata, findings_summary, llm_meta, eval_score, notes, tags
+- **BundleMetadata** — cluster, namespaces, k8s_version, node_count
+- **FindingSummary** — severity, title
+- **LLMMetaSummary** — provider, model, input_tokens, output_tokens, latency_ms
 
 ## Boundaries & Constraints
 
@@ -185,7 +214,8 @@ Defined in `src/backend/models/`. All in-memory, no database.
 | **GR-3** (actionable diagnostics) | DiagnosticReport schema requires severity, root_cause, remediation on every finding |
 | **GR-4** (web application) | React SPA frontend + FastAPI backend, served via Docker Compose |
 | **GR-5** (multi-signal breadth) | Signal classifier processes 5 types; context assembler includes all available types in prompt |
-| **GR-6** (data sensitivity) | Session store is in-memory only; no disk writes; structured logger excludes bundle content; no external calls except LLM API |
+| **GR-6** (data sensitivity) | Active session store is in-memory only; structured logger excludes bundle content; no external calls except LLM API |
+| **GR-6a** (persistence addendum) | Derived analysis data (reports, findings, metadata) persisted to local JSON via SessionPersistence; raw bundle archives not persisted |
 | **GR-7** (single-command startup) | docker-compose.yml with frontend + backend containers; `.env` for config |
 | **GR-8** (documented setup) | README.md with prerequisites, env config, docker compose instructions |
 | **GR-9** (MY_APPROACH_AND_THOUGHTS.md) | Final task generates this file, ≤500 words |

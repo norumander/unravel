@@ -2,7 +2,7 @@
 
 ## Current Focus
 
-All 19 tasks complete. MVP implementation finished.
+All 30 tasks complete. MVP + Session Explorer feature finished.
 
 ## Tasks
 
@@ -31,14 +31,25 @@ All 19 tasks complete. MVP implementation finished.
 | TASK-017 | Docker Compose & Environment Config | 2026-03-15 |
 | TASK-018 | LLM Error Handling & Resilience | 2026-03-15 |
 | TASK-019 | README & Documentation | 2026-03-15 |
+| TASK-020 | Session Persistence Data Models | 2026-03-22 |
+| TASK-021 | SessionPersistence Class (JSON storage) | 2026-03-22 |
+| TASK-022 | Bundle Metadata Extraction | 2026-03-22 |
+| TASK-023 | Session History API Routes (/api/history) | 2026-03-22 |
+| TASK-024 | Pipeline Integration (auto-save on completion) | 2026-03-22 |
+| TASK-025 | Docker Volume Configuration | 2026-03-22 |
+| TASK-026 | Frontend Types (SessionSummary, etc.) | 2026-03-22 |
+| TASK-027 | SessionExplorer Dashboard Component | 2026-03-22 |
+| TASK-028 | SessionDetail Slide-out Panel | 2026-03-22 |
+| TASK-029 | App Navigation (explorer phase as landing page) | 2026-03-22 |
+| TASK-030 | Integration Tests (session persistence) | 2026-03-22 |
 
 ## Backlog
 
-- Stretch: Severity-based report filtering (frontend)
+- Stretch: Resumable chat on saved sessions (context reconstruction)
+- Stretch: Session export (PDF, CSV)
+- Stretch: Session comparison (side-by-side findings)
+- Stretch: Full-text search across report content
 - Stretch: Bundle comparison (two bundles, diff analysis)
-- Stretch: Export report as Markdown
-- Stretch: Confidence scoring on findings
-- Stretch: Source citing for findings
 
 ## Session Log
 
@@ -71,5 +82,13 @@ All 19 tasks complete. MVP implementation finished.
 - **Completed**: All 19 tasks implemented. Backend: 127 tests passing (models, parser, classifier, session store, context assembler, LLM providers, API endpoints, error handling). Frontend: 11 tests passing (upload, report, chat components). Docker Compose + Dockerfiles + .env.example. README + MY_APPROACH_AND_THOUGHTS.md.
 - **State**: Full MVP complete. `docker compose up` runs the app. All acceptance criteria met. All golden requirements addressed.
 - **Next**: Docker build verification, then stretch goals if desired.
+- **Blockers**: None
+- **Open Questions**: None
+
+### Checkpoint — 2026-03-22 12:00
+- **Phase**: Session Explorer Feature (COMPLETE)
+- **Completed**: TASK-020 through TASK-030. Added session persistence layer (JSON files on Docker volume), `/api/history` CRUD endpoints, session explorer dashboard as landing page, session detail slide-out panel, bundle metadata extraction, pipeline integration for auto-save on analysis completion and chat. GR-6a addendum added to GOLDEN.md. ADR-008 documenting the persistence decision. 289 backend tests passing (36 new). Frontend type-checks clean.
+- **State**: Full session explorer functional. Landing page shows table of past analyses with search, filter, stats. Clicking a session opens detail panel with findings, metadata, editable notes. "Open Full Report" loads saved report. New analyses auto-persist on completion.
+- **Next**: Documentation updates, push to remotes.
 - **Blockers**: None
 - **Open Questions**: None

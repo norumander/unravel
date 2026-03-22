@@ -80,6 +80,9 @@ The most critical test surface in an LLM-powered application is the **boundary b
 | LLM providers | ≥80% | Mocked SDK calls; error paths covered |
 | API endpoints | ≥80% | Integration tests cover happy + error paths |
 | Session store | ≥90% | Simple but critical CRUD |
+| Session persistence | ≥90% | File I/O, index integrity, CRUD |
+| Session history API | ≥80% | CRUD endpoints, error cases |
+| Metadata extraction | ≥90% | Best-effort parsing, graceful degradation |
 | Frontend components | ≥70% | State transitions and rendering; no visual tests |
 | Overall | ≥80% | PRD requirement |
 
@@ -94,7 +97,7 @@ src/backend/
 │   ├── bundle/             # Parser, classifier
 │   ├── analysis/           # Context assembler, chat engine
 │   ├── llm/                # Provider interface + implementations
-│   ├── sessions/           # Session store
+│   ├── sessions/           # Session store + persistence + metadata
 │   ├── logging/            # Structured logger
 │   └── api/                # FastAPI routes
 └── tests/

@@ -1,12 +1,18 @@
 # Unravel
 
-AI-powered Kubernetes support bundle analyzer. Upload a [Troubleshoot](https://troubleshoot.sh) support bundle, get a structured diagnostic report, then investigate interactively via chat.
+AI-powered Kubernetes support bundle analyzer. Upload a [Troubleshoot](https://troubleshoot.sh) support bundle, get a structured diagnostic report, then investigate interactively via chat. Browse past analyses in the session explorer dashboard.
 
 ## Architecture
 
 ```
 ┌───────────────────────────────────────────────────────────────┐
 │                          Unravel                              │
+│                                                               │
+│  Session Explorer (landing page)                              │
+│  ┌─ Past analyses table ─── Detail panel ──────────────────┐  │
+│  │  Search, filter, stats    Notes, metadata, findings     │  │
+│  └─────────────────────────────────────────────────────────┘  │
+│         ↓ New Analysis              ↓ Open Saved Session      │
 ├──── Sidebar ────┬──── Main Content ───────────────────────────┤
 │                 │                                             │
 │  File Explorer  │  Progress Stepper → Diagnostic Report      │
@@ -23,12 +29,20 @@ AI-powered Kubernetes support bundle analyzer. Upload a [Troubleshoot](https://t
 ┌─────────────────────┐       ┌──────────────────────────────┐
 │  React SPA (:3000)  │──────▶│  FastAPI Backend (:8000)     │
 │                     │  API  │                              │
-│  Upload → Report    │  SSE  │  Bundle Parser               │
-│  → Chat             │◀──────│  Signal Classifier           │
+│  Explorer → Upload  │  SSE  │  Bundle Parser               │
+│  → Report → Chat    │◀──────│  Signal Classifier           │
 │                     │       │  Context Assembler            │
 └─────────────────────┘       │  LLM Provider (Anthropic/    │
                               │    OpenAI)                    │
                               │  Session Store (in-memory)    │
+                              │  Session Persistence (JSON)   │
+                              └──────────────────────────────┘
+                                        │
+                              ┌─────────▼──────────────────┐
+                              │  Docker Volume              │
+                              │  /app/data/sessions/        │
+                              │  sessions.json + per-session │
+                              │  report.json / chat.json     │
                               └──────────────────────────────┘
 ```
 
@@ -73,15 +87,20 @@ The app will be available at **http://localhost:3000**.
 | `RAG_CHUNK_SIZE` | No | Embedding chunk size in tokens (default: `512`) |
 | `RAG_CHUNK_OVERLAP` | No | Chunk overlap in tokens (default: `50`) |
 | `EVAL_THRESHOLD` | No | Minimum coverage score for quality eval (default: `0.7`) |
+| `SESSION_DATA_DIR` | No | Override session history storage path (default: `/app/data/sessions`) |
 
 ## Usage
 
-1. **Upload** a `.tar.gz` support bundle via drag-and-drop or file picker
-2. **Watch** the progress stepper as the bundle is extracted, classified by signal type, and sent to the AI for analysis
-3. **Review** the diagnostic report: executive summary, event timeline, and findings with severity filtering (critical / warning / info)
-4. **Browse** bundle files in the sidebar file explorer, grouped by signal type — click any file to view its contents in a slide-over panel
-5. **Investigate** via chat — pick a suggested follow-up question or ask your own; the AI retrieves bundle files on demand
-6. **Export** the full report as Markdown
+1. **Explore** the session explorer dashboard — browse past analyses, search by bundle name or cluster, filter by status or severity
+2. **Upload** a `.tar.gz` support bundle via drag-and-drop or file picker (click "+ New Analysis")
+3. **Watch** the progress stepper as the bundle is extracted, classified by signal type, and sent to the AI for analysis
+4. **Review** the diagnostic report: executive summary, event timeline, and findings with severity filtering (critical / warning / info)
+5. **Browse** bundle files in the sidebar file explorer, grouped by signal type — click any file to view its contents in a slide-over panel
+6. **Investigate** via chat — pick a suggested follow-up question or ask your own; the AI retrieves bundle files on demand
+7. **Export** the full report as Markdown
+8. **Return** to the explorer — your analysis is saved and can be re-opened later with the full report and chat transcript
+
+Session history is persisted to a Docker volume and survives container restarts (`docker compose down`). Use `docker compose down -v` to clear all session data.
 
 ## How It Works
 
@@ -93,7 +112,7 @@ The app will be available at **http://localhost:3000**.
 6. **LLM Analysis**: Streams a structured diagnostic report via SSE with findings, root causes, and remediations (with copy-to-clipboard on each remediation). A quality evaluator checks coverage and citation accuracy after generation
 7. **Interactive Chat**: Follow-up investigation with two tools — `search_bundle` for semantic retrieval of relevant chunks, and `get_file_contents` for full file access. Suggested follow-up questions are generated from the report findings to help guide the investigation
 
-All bundle data is held in memory only and never persisted to disk. Sessions are cleared on delete or server restart.
+Raw bundle data is held in memory during active analysis. Completed analysis results (reports, findings, chat transcripts, and extracted metadata) are persisted to a Docker volume as JSON files for the session explorer.
 
 ## Development
 
@@ -131,11 +150,11 @@ npm run dev  # Dev server on :3000
 │   │   │   ├── logging/      # Structured LLM call logger
 │   │   │   ├── models/       # Pydantic schemas
 │   │   │   ├── rag/          # Embedder (ChromaDB) + retriever
-│   │   │   └── sessions/     # In-memory session store
+│   │   │   └── sessions/     # In-memory store + JSON persistence
 │   │   └── tests/
 │   └── frontend/
 │       └── src/
-│           ├── components/    # Upload, Report, Chat phases
+│           ├── components/    # Explorer, Upload, Report, Chat phases
 │           │   ├── FileExplorer.tsx   # Sidebar file browser by signal type
 │           │   ├── FileViewer.tsx     # Slide-over panel for file contents
 │           │   └── Timeline.tsx       # Chronological event timeline

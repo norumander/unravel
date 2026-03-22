@@ -11,6 +11,7 @@
 | ADR-005 | Local embedding model over API-based embeddings | Accepted | 2026-03-19 |
 | ADR-006 | Content-type-aware hybrid chunking | Accepted | 2026-03-19 |
 | ADR-007 | LangGraph post-analysis quality evals | Accepted | 2026-03-19 |
+| ADR-008 | Session persistence for explorer dashboard | Accepted | 2026-03-22 |
 
 ---
 
@@ -113,3 +114,17 @@
 - **Consequences**:
   - Positive: Catches low-quality reports before the user sees them. Provides confidence scoring.
   - Negative: Adds 2 LLM calls for LLM judge evals + potential retry. Worst case ~2x analysis time. Acceptable — eval progress is streamed to the user during loading.
+
+---
+
+## ADR-008: Session Persistence for Explorer Dashboard
+
+- **Status**: Accepted
+- **Date**: 2026-03-22
+- **Context**: The original design (ADR-002) used in-memory-only storage, justified by GR-6's data sensitivity constraint. However, the assignment doc specifies "Technical Constraints: None" and explicitly asks "What else can you do within the problem domain that would be interesting?" SREs working across multiple support bundles need to reference past analyses — the ephemeral single-use flow doesn't match their workflow. GR-6 was self-imposed during bootstrap (domain inference), not a requirement from Replicated.
+- **Decision**: Add a `SessionPersistence` class that writes completed analysis data (reports, chat transcripts, extracted metadata) to JSON files on a Docker named volume. The existing in-memory `SessionStore` remains unchanged for active sessions. A new session explorer dashboard replaces the upload screen as the landing page. New `/api/history` endpoints provide CRUD access. GR-6 was amended with GR-6a to explicitly permit persisting derived analysis data.
+- **Alternatives considered**: (a) SQLite — more structured but adds a dependency for a simple index + document store use case; (b) Redis — overkill for a single-user prototype; (c) Keep everything ephemeral — misses the opportunity to demonstrate product thinking.
+- **Golden Requirements Impact**: GR-6a (new addendum) — explicitly permits persistence of derived data. GR-6 (no external services) — still enforced, all data stays local. ADR-002 — not superseded; active sessions still use in-memory storage. SessionPersistence is a separate layer for completed sessions.
+- **Consequences**:
+  - Positive: SREs can browse, search, and revisit past analyses. Demonstrates product thinking beyond single-use analysis. Session data survives container restarts.
+  - Negative: JSON files are not horizontally scalable or queryable. Acceptable for a single-user prototype. File I/O adds minimal latency (~1-5ms for writes).
