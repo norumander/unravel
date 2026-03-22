@@ -277,11 +277,13 @@ async def analyze_bundle(session_id: str):
             cleaned = _sanitize_signal_types(cleaned)
 
             # Parse the complete response into a DiagnosticReport
+            report_obj = None
+            eval_report = None
             try:
-                report = DiagnosticReport.model_validate_json(cleaned)
-                session.report = report
+                report_obj = DiagnosticReport.model_validate_json(cleaned)
+                session.report = report_obj
                 yield {
-                    "data": json.dumps({"type": "report", "report": report.model_dump()})
+                    "data": json.dumps({"type": "report", "report": report_obj.model_dump()})
                 }
 
                 # Run programmatic quality evals
@@ -289,7 +291,7 @@ async def analyze_bundle(session_id: str):
                     st for st, files in session.classified_signals.items() if files
                 }
                 eval_report = run_programmatic_evals(
-                    report, bundle_signal_types, session.extracted_files
+                    report_obj, bundle_signal_types, session.extracted_files
                 )
 
                 # Stream eval scores to frontend
@@ -299,11 +301,11 @@ async def analyze_bundle(session_id: str):
                 })}
 
                 # Attach eval scores to report
-                report.eval_scores = {
+                report_obj.eval_scores = {
                     r.dimension: r.score for r in eval_report.results
                 }
-                report.eval_scores["composite"] = eval_report.composite_score
-                session.report = report
+                report_obj.eval_scores["composite"] = eval_report.composite_score
+                session.report = report_obj
 
             except Exception as exc:
                 import logging
@@ -323,8 +325,8 @@ async def analyze_bundle(session_id: str):
                 bundle_metadata = extract_bundle_metadata(session.extracted_files)
                 findings = [
                     FindingSummary(severity=f.severity.value, title=f.title)
-                    for f in report.findings
-                ] if report else []
+                    for f in report_obj.findings
+                ] if report_obj else []
 
                 llm_meta_summary = None
                 if llm_meta:
@@ -350,7 +352,7 @@ async def analyze_bundle(session_id: str):
                     eval_score=eval_report.composite_score if eval_report else None,
                 )
 
-                report_dict = report.model_dump() if report else {}
+                report_dict = report_obj.model_dump() if report_obj else {}
                 persistence.save_session(summary, report=report_dict)
             except Exception:
                 import logging

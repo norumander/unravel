@@ -203,7 +203,7 @@ function App() {
       {/* Main content */}
       <main className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-4xl space-y-8 p-8">
-          {/* Report / Analysis progress */}
+          {/* Report — streams for new analyses, renders directly for saved sessions */}
           {sessionId && manifest && (
             <ReportPhase
               sessionId={sessionId}
@@ -212,11 +212,26 @@ function App() {
               onReportComplete={handleReportComplete}
               onFileSelect={(path, excerpt) => setSelectedFile({ path, excerpt })}
               onToast={addToast}
+              savedReport={isViewingSaved ? report : undefined}
             />
           )}
 
-          {/* Chat — appears after report is ready */}
-          {report && sessionId && <ChatPhase sessionId={sessionId} report={report} onToast={addToast} onMessagesChange={setChatMessages} />}
+          {/* Chat — active sessions allow interaction; saved sessions show read-only transcript */}
+          {report && sessionId && !isViewingSaved && <ChatPhase sessionId={sessionId} report={report} onToast={addToast} onMessagesChange={setChatMessages} />}
+
+          {isViewingSaved && chatMessages.length > 0 && (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-6">
+              <h2 className="mb-4 text-xs font-semibold uppercase tracking-widest text-zinc-500">Chat Transcript</h2>
+              <div className="space-y-3">
+                {chatMessages.map((msg, i) => (
+                  <div key={i} className={`rounded-lg px-4 py-3 text-sm ${msg.role === 'user' ? 'bg-zinc-800 text-zinc-300' : 'bg-zinc-800/50 text-zinc-400'}`}>
+                    <span className="mb-1 block text-[10px] font-medium uppercase tracking-widest text-zinc-500">{msg.role}</span>
+                    {msg.content}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </main>
 

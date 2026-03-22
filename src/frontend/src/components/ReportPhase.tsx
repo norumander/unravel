@@ -10,6 +10,8 @@ interface ReportPhaseProps {
   onReportComplete: (report: DiagnosticReport) => void
   onFileSelect?: (path: string, excerpt?: string) => void
   onToast?: (type: 'warning' | 'error', message: string) => void
+  /** When provided, skip SSE streaming and render this report directly (read-only mode). */
+  savedReport?: DiagnosticReport | null
 }
 
 const SEVERITY_ORDER = { critical: 0, warning: 1, info: 2 } as const
@@ -198,8 +200,9 @@ export function ReportPhase({
   onReportComplete,
   onFileSelect,
   onToast,
+  savedReport,
 }: ReportPhaseProps) {
-  const [report, setReport] = useState<DiagnosticReport | null>(null)
+  const [report, setReport] = useState<DiagnosticReport | null>(savedReport ?? null)
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>('all')
   const [analysisComplete, setAnalysisComplete] = useState(false)
   const [chunkCount, setChunkCount] = useState(0)
@@ -264,6 +267,8 @@ export function ReportPhase({
   }, [isStreaming, report])
 
   useEffect(() => {
+    // Skip streaming for saved/pre-loaded reports
+    if (savedReport) return
     // Start analysis stream. The ref guard prevents double-starting
     // but we intentionally do NOT abort on cleanup — StrictMode's
     // mount/unmount/remount cycle would kill the long-running SSE
@@ -271,7 +276,7 @@ export function ReportPhase({
     if (startedRef.current) return
     startedRef.current = true
     startStream(`/api/analyze/${sessionId}`)
-  }, [sessionId, startStream])
+  }, [sessionId, startStream, savedReport])
 
   // Build analysis step detail & sub-detail
   const analysisSubDetail = (isAnalyzing || (analysisComplete && !report))
