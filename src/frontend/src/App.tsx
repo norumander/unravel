@@ -45,21 +45,6 @@ function App() {
     setReport(r)
   }, [])
 
-  const handleReset = useCallback(async () => {
-    if (sessionId && !isViewingSaved) {
-      await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' }).catch(() => {})
-    }
-    setPhase('explorer')
-    setSessionId(null)
-    setManifest(null)
-    setSignalSummary({})
-    setReport(null)
-    setSelectedFile(null)
-    setChatMessages([])
-    setSelectedSessionId(null)
-    setIsViewingSaved(false)
-  }, [sessionId, isViewingSaved])
-
   const handleOpenSavedSession = useCallback((detail: SessionDetailType) => {
     setSessionId(detail.summary.id)
     setReport(detail.report)
@@ -75,7 +60,11 @@ function App() {
     setPhase('dashboard')
   }, [])
 
-  const handleBackToExplorer = useCallback(() => {
+  const handleBackToExplorer = useCallback(async () => {
+    // Clean up active in-memory session (skip for saved session views)
+    if (sessionId && !isViewingSaved) {
+      await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' }).catch(() => {})
+    }
     setReport(null)
     setSelectedFile(null)
     setChatMessages([])
@@ -85,7 +74,7 @@ function App() {
     setSelectedSessionId(null)
     setIsViewingSaved(false)
     setPhase('explorer')
-  }, [])
+  }, [sessionId, isViewingSaved])
 
   const handleSessionDeleted = useCallback((_deletedId: string) => {
     setSelectedSessionId(null)
