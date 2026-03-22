@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { LogoMark } from './Logo'
 import type { SessionSummary } from '../types/api'
 
 interface SessionExplorerProps {
@@ -75,13 +76,16 @@ export function SessionExplorer({ onNewAnalysis, onSelectSession }: SessionExplo
       <div className="max-w-6xl mx-auto px-6 py-8">
         {/* Header */}
         <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-2xl font-bold text-zinc-100">Unravel</h1>
-            <p className="text-sm text-zinc-500 mt-1">Support Bundle Analysis</p>
+          <div className="flex items-center gap-3">
+            <LogoMark size={36} />
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-zinc-50">unravel</h1>
+              <p className="text-sm text-zinc-500">AI-powered Kubernetes support bundle analysis</p>
+            </div>
           </div>
           <button
             onClick={onNewAnalysis}
-            className="px-4 py-2 bg-teal-400 text-zinc-950 rounded-lg text-sm font-semibold hover:bg-teal-300 transition-colors"
+            className="rounded-lg bg-teal-600 px-4 py-2.5 text-sm font-medium text-white transition-all duration-200 hover:bg-teal-500 hover:shadow-lg hover:shadow-teal-500/10"
           >
             + New Analysis
           </button>
@@ -99,7 +103,7 @@ export function SessionExplorer({ onNewAnalysis, onSelectSession }: SessionExplo
               <div className="text-[10px] uppercase tracking-widest text-zinc-500">With Critical</div>
             </div>
             <div className="text-center border-l border-zinc-800">
-              <div className="text-2xl font-bold text-teal-400">{stats.completed}</div>
+              <div className="text-2xl font-bold text-teal-500">{stats.completed}</div>
               <div className="text-[10px] uppercase tracking-widest text-zinc-500">Completed</div>
             </div>
             <div className="text-center border-l border-zinc-800">
@@ -143,11 +147,13 @@ export function SessionExplorer({ onNewAnalysis, onSelectSession }: SessionExplo
         ) : error ? (
           <div className="text-center py-16 text-red-400">{error}</div>
         ) : sessions.length === 0 ? (
-          <div className="text-center py-16">
-            <p className="text-zinc-500 mb-4">No analyses yet</p>
+          <div className="flex flex-col items-center justify-center py-24">
+            <LogoMark size={48} className="mb-4" />
+            <p className="text-lg font-medium text-zinc-300 mb-2">No analyses yet</p>
+            <p className="text-sm text-zinc-500 mb-6">Upload a support bundle to get started</p>
             <button
               onClick={onNewAnalysis}
-              className="px-6 py-3 bg-teal-400 text-zinc-950 rounded-lg font-semibold hover:bg-teal-300 transition-colors"
+              className="rounded-lg bg-teal-600 px-5 py-2.5 text-sm font-medium text-white transition-all duration-200 hover:bg-teal-500 hover:shadow-lg hover:shadow-teal-500/10"
             >
               Analyze Your First Bundle
             </button>
@@ -174,7 +180,7 @@ export function SessionExplorer({ onNewAnalysis, onSelectSession }: SessionExplo
                   key={session.id}
                   onClick={() => handleRowClick(session)}
                   className={`grid grid-cols-[2.5fr_1fr_1.2fr_0.8fr_80px] gap-2 px-4 py-3 border-b border-zinc-800/50 cursor-pointer hover:bg-zinc-800/30 transition-colors ${
-                    selectedId === session.id ? 'bg-teal-400/5 border-l-2 border-l-teal-400' : ''
+                    selectedId === session.id ? 'bg-teal-500/5 border-l-2 border-l-teal-500' : ''
                   } ${session.status === 'error' ? 'opacity-50' : ''}`}
                 >
                   <div>
@@ -203,7 +209,7 @@ export function SessionExplorer({ onNewAnalysis, onSelectSession }: SessionExplo
                   <span className="text-zinc-400 text-sm self-center">
                     {formatRelativeTime(session.timestamp)}
                   </span>
-                  <span className={`text-sm self-center ${session.status === 'completed' ? 'text-teal-400' : 'text-red-500'}`}>
+                  <span className={`text-sm self-center ${session.status === 'completed' ? 'text-teal-500' : 'text-red-500'}`}>
                     ● {session.status === 'completed' ? 'Done' : 'Error'}
                   </span>
                 </div>

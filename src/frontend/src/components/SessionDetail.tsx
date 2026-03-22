@@ -139,7 +139,7 @@ export function SessionDetail({ sessionId, onClose, onOpenReport, onDelete }: Se
       <div className="flex gap-2 mt-auto pt-4">
         <button
           onClick={() => onOpenReport(detail)}
-          className="flex-1 px-3 py-2 bg-teal-400 text-zinc-950 rounded-lg text-sm font-semibold hover:bg-teal-300 transition-colors text-center"
+          className="flex-1 px-3 py-2 bg-teal-600 text-white rounded-lg text-sm font-medium transition-all duration-200 hover:bg-teal-500 hover:shadow-lg hover:shadow-teal-500/10 text-center"
         >
           Open Full Report
         </button>
